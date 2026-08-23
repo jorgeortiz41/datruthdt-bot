@@ -57,16 +57,37 @@ to any creator: you never have to guess at someone's catchphrases.
 ```bash
 git clone <your-repo-url> datruthdt-bot
 cd datruthdt-bot
-python3 -m venv .venv
-source .venv/bin/activate          # <- do this in every new shell
-pip install -e .
-cp .env.example .env               # then fill in the two required keys
+
+conda env create -f environment.yml
+conda activate datruthdt-bot        # <- do this in every new shell
+
+cp .env.example .env                # then fill in the two required keys
 ```
 
-> **`zsh: command not found: creatorbot`** means the venv isn't active in this
-> shell. Either `source .venv/bin/activate`, or call it by path without
-> activating: `.venv/bin/creatorbot doctor`. All `creatorbot ...` commands below
-> assume an activated venv.
+Or without the environment file:
+
+```bash
+conda create -n datruthdt-bot python=3.12 -y
+conda activate datruthdt-bot
+pip install -e .
+```
+
+> **`zsh: command not found: creatorbot`** means the environment isn't active in
+> this shell. Run `conda activate datruthdt-bot`. Being in the project directory
+> is not enough — every `creatorbot ...` command below assumes the env is active.
+
+<details>
+<summary>Prefer venv?</summary>
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate && pip install -e .
+```
+
+On macOS, check your interpreter first — a broken `pyexpat` in some Homebrew
+Python builds makes `python3 -m venv` produce a half-built environment with no
+`activate` script and no pip. See
+[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#pip-install-fails-on-macos).
+</details>
 
 You need two things in `.env`:
 

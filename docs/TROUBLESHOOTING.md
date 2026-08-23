@@ -100,22 +100,18 @@ just `bot`. If you didn't, re-run the OAuth2 URL with both ticked.
 
 ## `command not found: creatorbot`
 
-The venv isn't active in this shell. Either activate it:
+The environment isn't active in this shell:
 
 ```bash
-cd datruthdt-bot
-source .venv/bin/activate
+conda activate datruthdt-bot
 creatorbot doctor
 ```
 
-or skip activation and call it by path:
+Being in the project directory is not enough on its own — the entry point is
+installed into the environment, and only reaches `$PATH` once it's activated.
 
-```bash
-.venv/bin/creatorbot doctor
-```
-
-Being in the project directory is not enough on its own — the entry point lives
-in `.venv/bin/`, which only lands on `$PATH` when the venv is activated.
+Check which environment you're in with `conda env list` (the active one is
+starred) or `which creatorbot`.
 
 ---
 
@@ -248,10 +244,20 @@ If it prints `('', ('', '', ''), '')`, reinstall the interpreter:
 brew reinstall expat python@3.14
 ```
 
-Or build the venv from a different working Python:
+**Related failure:** when `pyexpat` is broken, `python3 -m venv .venv` can leave
+a *half-built* environment — python symlinks present, but no `activate` script
+and no pip — which then fails with:
+
+```
+source: no such file or directory: .venv/bin/activate
+```
+
+Delete it and use conda, which ships its own working interpreter:
 
 ```bash
-/opt/homebrew/Caskroom/miniconda/base/bin/python3 -m venv .venv
+rm -rf .venv
+conda env create -f environment.yml
+conda activate datruthdt-bot
 ```
 
 ---

@@ -1,0 +1,24 @@
+# Conda environment for creatorbot.
+#
+#   conda env create -f environment.yml
+#   conda activate datruthdt-bot
+#
+# To update after changing dependencies:
+#   conda env update -f environment.yml --prune
+#
+# Python 3.12 rather than 3.13/3.14: yt-dlp warns on 3.10 and below, and some
+# wheels still lag on the newest releases. 3.11+ is all the code requires.
+name: datruthdt-bot
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12
+  - pip
+
+  # Installed via pip so the versions match pyproject.toml exactly and the
+  # `creatorbot` entry point gets registered.
+  - pip:
+      - -e .
