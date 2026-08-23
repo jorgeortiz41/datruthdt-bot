@@ -57,9 +57,16 @@ to any creator: you never have to guess at someone's catchphrases.
 ```bash
 git clone <your-repo-url> datruthdt-bot
 cd datruthdt-bot
-python3 -m venv .venv && .venv/bin/pip install -e .
-cp .env.example .env      # then fill in the two required keys
+python3 -m venv .venv
+source .venv/bin/activate          # <- do this in every new shell
+pip install -e .
+cp .env.example .env               # then fill in the two required keys
 ```
+
+> **`zsh: command not found: creatorbot`** means the venv isn't active in this
+> shell. Either `source .venv/bin/activate`, or call it by path without
+> activating: `.venv/bin/creatorbot doctor`. All `creatorbot ...` commands below
+> assume an activated venv.
 
 You need two things in `.env`:
 

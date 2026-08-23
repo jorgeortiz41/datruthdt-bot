@@ -98,6 +98,27 @@ just `bot`. If you didn't, re-run the OAuth2 URL with both ticked.
 
 ---
 
+## `command not found: creatorbot`
+
+The venv isn't active in this shell. Either activate it:
+
+```bash
+cd datruthdt-bot
+source .venv/bin/activate
+creatorbot doctor
+```
+
+or skip activation and call it by path:
+
+```bash
+.venv/bin/creatorbot doctor
+```
+
+Being in the project directory is not enough on its own — the entry point lives
+in `.venv/bin/`, which only lands on `$PATH` when the venv is activated.
+
+---
+
 ## "Please enter a redirect URI" in the OAuth2 URL Generator
 
 A bot invite is a callback-less flow — it needs no redirect URI. The portal's
@@ -110,9 +131,17 @@ ID (General Information → *Application ID*):
 https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=2147568640&scope=bot%20applications.commands
 ```
 
-If you want to use the generator anyway, add any placeholder under **OAuth2 →
-Redirects** (e.g. `http://localhost`) and **Save Changes**. The bot never
-receives a callback either way, so the value is irrelevant.
+**Root cause, most often:** you ticked a scope beyond `bot` and
+`applications.commands` — e.g. `applications.commands.permissions.update`.
+Discord makes `response_type` and `redirect_uri` *mandatory* the moment you
+request any other scope, because that becomes a real authorization-code grant.
+Untick it and the redirect requirement disappears.
+
+This bot never needs a redirect URI. It is a **gateway** bot: it dials out to
+Discord over a websocket using `DISCORD_BOT_TOKEN`. It runs no web server and
+receives no callback. A `http://localhost:3000/api/auth/callback/...` style URI
+belongs to a *different* pattern — a web dashboard doing "Sign in with Discord"
+(e.g. NextAuth) — which this project does not have.
 
 ---
 
