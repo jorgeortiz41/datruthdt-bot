@@ -164,3 +164,17 @@ def test_discord_splitting_prefers_paragraph_boundaries():
     parts = _split_message(text, limit=450)
     assert len(parts) == 2
     assert parts[0].startswith("A")
+
+
+def test_unknown_source_type_raises_readable_error(tmp_path):
+    from creatorbot.sources import build_sources
+
+    persona = load_persona("datruthdt")
+    persona.raw["sources"] = [{"type": "not_a_real_source", "enabled": True}]
+    store = CorpusStore(tmp_path / "t.sqlite3")
+    try:
+        with pytest.raises(ValueError, match="Unknown source type"):
+            build_sources(persona, store)
+    finally:
+        persona.raw.pop("sources")
+        store.close()

@@ -44,9 +44,10 @@ def build_sources(persona: PersonaConfig, store: Any) -> list[Source]:
             continue
         impl = REGISTRY.get(cfg.type)
         if impl is None:
+            known = sorted(set(REGISTRY) | SERVER_SIDE_TYPES)
             raise ValueError(
                 f"Unknown source type {cfg.type!r} in {persona.path.name}. "
-                f"Known types: {', '.join(sorted(REGISTRY) | SERVER_SIDE_TYPES)}"
+                f"Known types: {', '.join(known)}"
             )
         sources.append(impl(cfg, persona, store))
     return sources
