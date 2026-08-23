@@ -18,6 +18,7 @@ import json
 import logging
 from typing import Any
 
+from .chunking import BLEEP_TOKEN, _BLEEP
 from .config import PersonaConfig
 from .store import CorpusStore
 
@@ -30,15 +31,32 @@ Write a precise style guide that another writer could follow to sound like this
 person in short text replies. Base every claim on evidence in the excerpts —
 if you can't see it, don't assert it.
 
+IMPORTANT — how to read these transcripts:
+
+* `[bleep]` is YouTube's automatic caption censor firing on a swear word. It is
+  NOT the speaker being clean; it is the opposite. Count every `[bleep]` as
+  profanity when you judge how much, how hard and how casually they swear. A
+  transcript dense with `[bleep]` is someone who swears constantly, even though
+  you cannot see the words.
+* These are auto-generated captions of *speech*. Disfluency, repetition and
+  self-correction are artefacts of talking, not necessarily of personality —
+  describe them, but don't mistake "thinks out loud on video" for "hedges and
+  softens every opinion". Judge conviction by what they actually assert, not by
+  how many times they restart a sentence.
+
 Cover:
 1. Cadence and sentence shape (length, restarts, run-ons, fragments).
 2. Filler and discourse markers, with the actual words they use.
 3. Recurring phrases and verbal tics — quote the real ones you can see, and note
    roughly how often each appears. Do not invent catchphrases.
-4. How they express strong positive and strong negative reactions.
-5. How they address the audience.
-6. How they explain technical/numeric details.
-7. What they do NOT do (register, topics, tone they avoid).
+4. How they express strong positive and strong negative reactions, and how
+   profane they are (see the `[bleep]` note above).
+5. How they address the audience, and how they treat people who disagree with
+   them — deference, ribbing, or outright mockery.
+6. How confident and combative they are: do they hedge, or do they commit and
+   defend? How do they talk about popular/community opinion they disagree with?
+7. How they explain technical/numeric details.
+8. What they do NOT do (register, topics, tone they avoid).
 
 Then give 8-12 short "sounds like them" / "doesn't sound like them" contrast
 pairs, written as one-line text-message-length replies.
@@ -61,8 +79,13 @@ def generate_style_profile(
             "No transcript chunks in the corpus. Run `creatorbot ingest` first."
         )
 
+    # Normalise the caption bleep here as well as at ingest, so a corpus built
+    # before that fix still teaches the profiler about profanity without needing
+    # a full re-ingest.
     excerpts = "\n\n".join(
-        f"[{c.doc_title} @ {c.meta.get('timestamp', '?')}]\n{c.text}" for c in chunks
+        f"[{c.doc_title} @ {c.meta.get('timestamp', '?')}]\n"
+        f"{_BLEEP.sub(BLEEP_TOKEN, c.text)}"
+        for c in chunks
     )
 
     response = client.messages.create(
@@ -157,11 +180,24 @@ def build_system_prompt(persona: PersonaConfig, tool_names: list[str]) -> str:
     profanity = v.get("profanity", "light")
     voice_lines.append(
         {
-            "none": "\nNo profanity. Keep it clean.",
+            "none": "\nNo profanity at all. Keep it clean.",
             "light": "\nMild profanity is in character but keep it occasional — "
-            "'damn', 'hell', 'crap'. Never slurs, never sexual content.",
-            "uncensored": "\nStrong language is fine where it fits the energy. "
+            "'damn', 'hell', 'crap'.",
+            "uncensored": "\nHe swears, and so do you. Profanity is casual texture "
+            "woven through normal sentences — 'this kit is dogshit', 'nah that's "
+            "fucking stupid', 'he's dead ass mid' — not a punchline you build up "
+            "to and not something you deploy once per message to prove a point. "
+            "A swear or two in a short reply is normal and expected. Note that "
+            "the transcripts you learned from have his profanity censored by "
+            "YouTube's auto-captions, so they systematically understate this — "
+            "do not take their mildness as the target.",
         }.get(profanity, "")
+    )
+    # The floor, regardless of the profanity setting. Not configurable.
+    voice_lines.append(
+        "\nNever slurs, never sexual content, and never a sincere personal "
+        "attack on the person asking — go after takes, units and the community "
+        "consensus, not the human in front of you."
     )
     parts.append("\n".join(voice_lines))
 
@@ -172,6 +208,26 @@ def build_system_prompt(persona: PersonaConfig, tool_names: list[str]) -> str:
             "\n# Learned style guide\n\n"
             "Derived from real transcripts of this creator. Where it conflicts "
             "with the general description above, this wins.\n\n" + profile
+        )
+
+    # -- 3b. Corrections that outrank the learned profile --------------------
+    #
+    # The profile can only describe the sample it was shown, and that sample is
+    # biased in ways it cannot detect: YouTube censors profanity in captions, and
+    # whichever videos happened to be ingested skew the register (a run of news
+    # and announcement videos makes anyone look measured). This block is the
+    # human override for exactly those blind spots, so it is rendered last and
+    # declared to win.
+    overrides = v.get("overrides") or []
+    if overrides and profile:
+        parts.append(
+            "\n# Corrections to the learned style guide\n\n"
+            "The style guide above was inferred from a limited, biased sample of "
+            "videos. These corrections come from someone who has actually watched "
+            "the channel. **Where they contradict the style guide, these win** — "
+            "including where the guide tells you to hedge, soften or tone "
+            "yourself down.\n\n"
+            + "\n".join(f"- {o}" for o in overrides)
         )
 
     # -- 4. Verbatim exemplars ----------------------------------------------
@@ -220,14 +276,31 @@ Use tools in parallel when the question needs more than one."""
     )
 
     # -- 7. Answer shape -----------------------------------------------------
+    #
+    # The style profile above describes SPOKEN delivery — run-ons, stutter
+    # restarts, self-correction, circling a point three times. That is accurate
+    # for video and wrong for a chat message: transcribed rambling reads as
+    # waffling, and waffling is the opposite of the confident register we're
+    # going for. This section is the translation layer between the two.
     rules = persona.answering.get("rules", [])
     max_chars = persona.discord.get("max_message_chars", 1900)
+    target = int(persona.answering.get("target_sentences", 3))
+
     answer_lines = [
         "\n# Writing the reply",
-        f"\n- This is Discord. Hard ceiling {max_chars} characters — aim for well under.",
-        "- Short paragraphs, no markdown headers, no bullet-point walls. Talk, don't format.",
+        "\n**You are writing a chat message, not a transcript.** Everything above "
+        "describes how he talks on video, where he has twenty minutes and thinks "
+        "out loud. You have a few lines. Keep the attitude, the opinions and one "
+        "or two verbal tics — drop the run-ons, the stutter-restarts, the "
+        "self-corrections and the circling back.",
+        f"\n- Target ~{target} sentences. Go longer only if asked to break "
+        f"something down properly. Hard ceiling {max_chars} characters.",
+        "- State your opinion once. Don't restate it three different ways.",
         "- Lead with the answer. Colour comes after, not before.",
+        "- Short paragraphs, no markdown headers, no bullet-point walls. Talk, don't format.",
         "- Keep the energy in the writing, not in emoji. One or two at most.",
+        "- Don't narrate your own process — no 'let me look that up', no "
+        "'I'll break this down for you'. Just do it.",
     ]
     answer_lines += [f"- {r}" for r in rules]
     parts.append("\n".join(answer_lines))

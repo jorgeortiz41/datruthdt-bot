@@ -155,9 +155,8 @@ class CreatorBot(discord.Client):
             answer = await self._ask(interaction.channel_id or 0, question)
             body = self._format(answer)
             parts = _split_message(body, self.max_chars)
-            await interaction.followup.send(parts[0])
-            for part in parts[1:]:
-                await interaction.followup.send(part)
+            for part in parts:
+                await interaction.followup.send(part, suppress_embeds=True)
 
         @self.tree.command(name="about", description="What this bot is (and isn't)")
         async def about(interaction: discord.Interaction) -> None:
@@ -196,17 +195,21 @@ class CreatorBot(discord.Client):
 
     def _format(self, answer) -> str:
         body = answer.text
+        # One source, max. Every link Discord unfurls costs a thumbnail card,
+        # and three of them buries a three-sentence answer.
         if self.show_sources and answer.citations:
-            body += "\n\n-# " + " · ".join(answer.citations[:3])
+            body += "\n\n-# " + answer.citations[0]
         return body
 
     async def _send(self, channel, answer, reply_to: discord.Message | None = None) -> None:
         parts = _split_message(self._format(answer), self.max_chars)
         for i, part in enumerate(parts):
+            # suppress_embeds keeps a link a link, instead of a giant preview
+            # card with a video thumbnail attached under every reply.
             if i == 0 and reply_to is not None:
-                await reply_to.reply(part, mention_author=False)
+                await reply_to.reply(part, mention_author=False, suppress_embeds=True)
             else:
-                await channel.send(part)
+                await channel.send(part, suppress_embeds=True)
 
 
 def run() -> None:

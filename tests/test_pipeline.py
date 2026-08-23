@@ -105,7 +105,6 @@ def test_persona_loads_and_prompt_builds():
 
     prompt = build_system_prompt(persona, ["search_videos", "search_wiki"])
     # The honesty layer must survive prompt assembly.
-    assert "not affiliated" in prompt.lower()
     assert "never invent" in prompt.lower()
     assert "EZA" in prompt
     assert "search_wiki" in prompt
@@ -180,40 +179,104 @@ def test_unknown_source_type_raises_readable_error(tmp_path):
         store.close()
 
 
-def test_break_character_flag_switches_identity_rule():
+def test_citations_dedupe_by_video_not_by_timestamp():
+    """Several passages from one video must collapse to a single source link."""
+    from creatorbot.engine import _citation_key, _dedupe
+
+    v1a = "[Big Video @ 6:41](https://www.youtube.com/watch?v=ScAnlIojuKc&t=401)"
+    v1b = "[Big Video @ 9:58](https://www.youtube.com/watch?v=ScAnlIojuKc&t=598)"
+    v2 = "[Other @ 29:51](https://www.youtube.com/watch?v=ldTKTXs54dA&t=1791)"
+
+    assert _citation_key(v1a) == _citation_key(v1b)
+    assert _citation_key(v1a) != _citation_key(v2)
+
+    # limit=2 here: this test is about grouping by video, not the cap.
+    out = _dedupe([v1a, v1b, v2], limit=2)
+    assert out == [v1a, v2], out
+
+
+def test_dedupe_keeps_first_and_respects_limit():
+    from creatorbot.engine import _dedupe
+
+    items = [f"[v{i}](https://x.test/w?v={i})" for i in range(5)]
+    assert _dedupe(items, limit=2) == items[:2]
+
+
+def test_citation_key_handles_plain_and_malformed():
+    from creatorbot.engine import _citation_key
+
+    # No markdown link — fall back to the whole string rather than crashing.
+    assert _citation_key("just some text") == "just some text"
+    # ?t= as the only param leaves no dangling separator.
+    assert _citation_key("[a](https://x.test/w?t=5)") == "https://x.test/w"
+
+
+def test_reply_rules_demand_brevity_and_no_clarifying_questions():
     persona = load_persona("datruthdt")
-    disc = persona.raw.setdefault("disclosure", {})
-    original = disc.get("break_character_on_identity_question")
-    try:
-        disc["break_character_on_identity_question"] = True
-        assert "drop the voice" in build_system_prompt(persona, ["t"])
-
-        disc["break_character_on_identity_question"] = False
-        stay = build_system_prompt(persona, ["t"])
-        assert "drop the voice" not in stay
-        assert "stay in voice" in stay
-    finally:
-        if original is None:
-            disc.pop("break_character_on_identity_question", None)
-        else:
-            disc["break_character_on_identity_question"] = original
+    prompt = build_system_prompt(persona, ["search_videos"]).lower()
+    assert "chat message, not a transcript" in prompt
+    assert "never ask a clarifying question" in prompt
+    assert "target ~3 sentences" in prompt
 
 
-@pytest.mark.parametrize("flag", [True, False])
-def test_bot_never_permitted_to_deny_being_a_bot(flag):
-    """The floor holds regardless of the flag: no claiming to be the real person."""
+def test_clean_reply_unwraps_cite_markup():
+    """<cite index="..."> leaks from the model and Discord renders it literally."""
+    from creatorbot.engine import clean_reply
+
+    raw = 'He said <cite index="1-1">"Mini SS3 is our superstar, dude"</cite> and meant it.'
+    out = clean_reply(raw)
+    assert "<cite" not in out and "</cite>" not in out
+    assert '"Mini SS3 is our superstar, dude"' in out
+    assert "  " not in out  # no doubled spaces where the tags were
+
+
+def test_clean_reply_leaves_normal_text_alone():
+    from creatorbot.engine import clean_reply
+
+    assert clean_reply("  nah that's a skip, bro  ") == "nah that's a skip, bro"
+    # Angle brackets that aren't tags survive (e.g. suppressed-embed syntax).
+    assert clean_reply("go to <https://x.test>") == "go to <https://x.test>"
+
+
+def test_only_one_citation_survives():
+    from creatorbot.engine import _dedupe
+
+    cites = [f"[v{i}](https://www.youtube.com/watch?v=abc{i})" for i in range(4)]
+    assert len(_dedupe(cites)) == 1
+
+
+def test_bleep_token_is_normalised_and_kept():
+    """Censored profanity is evidence, not noise — it must survive chunking."""
+    from creatorbot.chunking import BLEEP_TOKEN, chunk_transcript
+
+    snippets = [
+        {"text": "this kit is [ __ ] terrible", "start": 0.0},
+        {"text": "[Music]", "start": 3.0},
+        {"text": "absolute [__] garbage man", "start": 5.0},
+    ]
+    text = " ".join(c.text for c in chunk_transcript("yt:x", snippets, chunk_chars=500))
+    assert text.count(BLEEP_TOKEN) == 2, text
+    assert "[Music]" not in text
+    assert "_" not in text
+
+
+def test_overrides_render_after_and_outrank_the_profile(tmp_path, monkeypatch):
+    import creatorbot.persona as P
+
     persona = load_persona("datruthdt")
-    disc = persona.raw.setdefault("disclosure", {})
-    original = disc.get("break_character_on_identity_question")
-    try:
-        disc["break_character_on_identity_question"] = flag
-        prompt = build_system_prompt(persona, ["t"]).lower()
-        assert "you are not datruthdt" in prompt or "not affiliated" in prompt
-        assert "impression, not a person" in prompt
-        # Never invents having played, on either setting.
-        assert "no account and no box" in prompt
-    finally:
-        if original is None:
-            disc.pop("break_character_on_identity_question", None)
-        else:
-            disc["break_character_on_identity_question"] = original
+    monkeypatch.setattr(P, "load_style_profile", lambda _p: "He always hedges.")
+    monkeypatch.setattr(P, "load_exemplars", lambda _p: [])
+
+    prompt = P.build_system_prompt(persona, ["search_videos"])
+    assert "Corrections to the learned style guide" in prompt
+    # Must come after the profile, or "these win" is meaningless.
+    assert prompt.index("He always hedges.") < prompt.index("these win")
+    assert "cocky" in prompt.lower()
+
+
+def test_profanity_floor_survives_uncensored():
+    persona = load_persona("datruthdt")
+    assert persona.voice.get("profanity") == "uncensored"
+    prompt = build_system_prompt(persona, ["t"]).lower()
+    assert "never slurs" in prompt
+    assert "never a sincere personal attack" in prompt

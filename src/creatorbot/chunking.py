@@ -18,6 +18,11 @@ DEFAULT_OVERLAP_CHARS = 180
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
+#: YouTube censors profanity in auto-captions as "[ __ ]" (spacing varies).
+_BLEEP = re.compile(r"\[\s*_+\s*\]")
+#: What we normalise it to. Kept in the corpus deliberately — see chunk_transcript.
+BLEEP_TOKEN = "[bleep]"
+
 
 def make_uid(doc_id: str, ordinal: int, text: str) -> str:
     """Stable per-(document, position, content) id, so re-ingest is idempotent."""
@@ -107,8 +112,14 @@ def chunk_transcript(
     cleaned = []
     for s in snippets:
         t = re.sub(r"\s+", " ", (s.get("text") or "")).strip()
+        # Normalise YouTube's profanity bleep to a single canonical token.
+        # It arrives as "[ __ ]" (with spaces), so the old "[__]" test never
+        # matched it. These are *kept*, not dropped: for a creator who swears,
+        # the bleeps are the only surviving evidence of how much and where, and
+        # the style profiler is told what they mean.
+        t = _BLEEP.sub(BLEEP_TOKEN, t)
         # Auto-captions sprinkle these in.
-        if not t or t in {"[Music]", "[Applause]", "[Laughter]", "[__]"}:
+        if not t or t in {"[Music]", "[Applause]", "[Laughter]"}:
             continue
         cleaned.append({"text": t, "start": float(s.get("start") or 0.0)})
 

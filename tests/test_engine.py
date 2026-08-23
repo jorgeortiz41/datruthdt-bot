@@ -80,15 +80,14 @@ def test_plain_answer_no_tools(persona):
 
 def test_tool_call_then_answer(persona):
     script = [
-        response([tool_use("dokkaninfo_lookup", inp={"query": "Gogeta"})], "tool_use"),
+        response([tool_use("search_videos", inp={"query": "Gogeta"})], "tool_use"),
         response([text_block("Here's the link.")], "end_turn"),
     ]
     eng = build(persona, script)
     try:
         ans = asyncio.run(eng.answer("link me gogeta"))
         assert ans.text == "Here's the link."
-        assert "dokkaninfo_lookup" in ans.tools_used
-        assert any("dokkaninfo.com" in c for c in ans.citations)
+        assert "search_videos" in ans.tools_used
 
         # Second request must carry: user, assistant(content), user(tool_result)
         second = eng.client.messages.calls[1]["messages"]
@@ -106,8 +105,8 @@ def test_parallel_tool_results_go_in_one_message(persona):
     script = [
         response(
             [
-                tool_use("dokkaninfo_lookup", tid="a", inp={"query": "x"}),
-                tool_use("dokkaninfo_lookup", tid="b", inp={"query": "y"}),
+                tool_use("search_videos", tid="a", inp={"query": "x"}),
+                tool_use("search_videos", tid="b", inp={"query": "y"}),
             ],
             "tool_use",
         ),
@@ -168,7 +167,7 @@ def test_refusal_is_handled(persona):
 def test_iteration_cap_terminates(persona):
     # Always asks for a tool — must stop, not spin.
     script = [
-        response([tool_use("dokkaninfo_lookup", tid=f"t{i}", inp={"query": "x"})], "tool_use")
+        response([tool_use("search_videos", tid=f"t{i}", inp={"query": "x"})], "tool_use")
         for i in range(20)
     ]
     eng = build(persona, script)
