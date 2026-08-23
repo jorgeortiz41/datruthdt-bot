@@ -1,0 +1,27 @@
+# Secrets
+.env
+*.env
+!.env.example
+
+# Ingested corpora, indexes and caches — rebuildable, and not ours to redistribute.
+# Note: `data/` alone would exclude the directory itself, and a `!` rule cannot
+# re-include a file whose parent is excluded — hence `data/*`.
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
