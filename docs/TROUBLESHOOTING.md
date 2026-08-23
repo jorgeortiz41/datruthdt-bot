@@ -67,6 +67,57 @@ while authenticated, you're doing it under your own account.
 
 ---
 
+## Keychain prompt on every video ("wants to use your confidential information")
+
+Browsers encrypt their cookie store with a key held in the macOS keychain, so
+*every* read pops a prompt. Cookies are now exported **once** to
+`data/<persona>/cookies.txt` and reused, so you should see a single prompt per
+run at most. Click **Always Allow** on it.
+
+If you're still getting one per video, you're on an older build — `git pull`.
+Delete `data/<persona>/cookies.txt` to force a fresh export.
+
+That file contains live YouTube session cookies. It's written mode 0600 inside
+gitignored `data/`. Treat it like a password; delete it when you're done
+ingesting.
+
+---
+
+## "The page needs to be reloaded" partway through an ingest
+
+**Symptom.** The first N videos ingest fine, then every subsequent one fails.
+
+**Cause.** YouTube invalidated the session. It rotates cookies on *live* logins,
+so pulling them from the browser you're actively signed into burns the session
+after a burst of requests.
+
+**Fix.**
+
+1. **Export cookies from a private/incognito window**, then close the window.
+   In Brave/Chrome: open a private window, sign in to YouTube, use a
+   `cookies.txt` extension to export, close the window, then point at the file:
+
+   ```bash
+   YOUTUBE_COOKIES_FILE=/absolute/path/to/cookies.txt
+   ```
+
+   Closing the window means nothing keeps rotating those cookies out from under
+   you.
+
+2. **Slow down.** Default is 2s between videos:
+
+   ```bash
+   YOUTUBE_INGEST_DELAY_SECONDS=4
+   ```
+
+3. **Go in batches** — `creatorbot ingest --limit 50`, a few times.
+
+Ingest is incremental, so just re-run to resume; already-stored videos are
+skipped. The run now aborts after 12 consecutive failures instead of burning
+through the whole channel failing.
+
+---
+
 ## Nothing was ingested but there's no error
 
 Some videos genuinely have no captions (very old uploads, or captions disabled).

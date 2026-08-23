@@ -67,16 +67,62 @@ class YouTubeTranscriptSource(Source):
     #
     # See docs/TROUBLESHOOTING.md.
 
+    def cookie_file(self) -> str:
+        """Path to a cookies.txt to use for every request, or "" if none.
+
+        If YOUTUBE_COOKIES_FROM_BROWSER is set we export the browser's cookies
+        to a file **once** and reuse it. Reading them per-request instead would:
+
+          * pop a macOS keychain prompt on every single video (browsers encrypt
+            their cookie store with a keychain-held key), and
+          * re-read a *live* session that YouTube is actively rotating, which is
+            how you end up with "The page needs to be reloaded" partway through
+            a run and every subsequent video failing.
+
+        The exported file holds real YouTube session cookies. It is written
+        0600 into the gitignored data/ directory — treat it like a password.
+        """
+        explicit = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+        if explicit:
+            return explicit
+
+        browser = os.getenv("YOUTUBE_COOKIES_FROM_BROWSER", "").strip()
+        if not browser:
+            return ""
+
+        if self._cookie_file_cache is not None:
+            return self._cookie_file_cache
+
+        target = self.persona.data_dir / "cookies.txt"
+        max_age_h = float(os.getenv("YOUTUBE_COOKIES_MAX_AGE_HOURS", "12"))
+        if target.exists() and (time.time() - target.stat().st_mtime) / 3600 < max_age_h:
+            self._cookie_file_cache = str(target)
+            return self._cookie_file_cache
+
+        # "brave", or "brave:Profile 1" to pick a non-default profile.
+        name, _, profile = browser.partition(":")
+        try:
+            from yt_dlp.cookies import extract_cookies_from_browser
+
+            log.info("exporting cookies from %s (one keychain prompt)...", name)
+            jar = extract_cookies_from_browser(name.strip(), profile.strip() or None)
+            jar.save(str(target), ignore_discard=True, ignore_expires=True)
+            os.chmod(target, 0o600)
+            log.info("cookies cached at %s — reused for the rest of this run", target)
+        except Exception as exc:
+            log.warning("could not export cookies from %s: %s", name, exc)
+            self._cookie_file_cache = ""
+            return ""
+
+        self._cookie_file_cache = str(target)
+        return self._cookie_file_cache
+
     def _ytdlp_auth_opts(self) -> dict[str, Any]:
         opts: dict[str, Any] = {}
-        browser = os.getenv("YOUTUBE_COOKIES_FROM_BROWSER", "").strip()
-        cookie_file = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+        cookies = self.cookie_file()
+        if cookies:
+            opts["cookiefile"] = cookies
         proxy = os.getenv("YOUTUBE_PROXY", "").strip()
-        if browser:
-            # yt-dlp wants a tuple: (browser, profile, keyring, container)
-            opts["cookiesfrombrowser"] = (browser, None, None, None)
-        elif cookie_file:
-            opts["cookiefile"] = cookie_file
         if proxy:
             opts["proxy"] = proxy
         return opts
@@ -88,7 +134,10 @@ class YouTubeTranscriptSource(Source):
         kwargs: dict[str, Any] = {}
         proxy = os.getenv("YOUTUBE_PROXY", "").strip()
         webshare_user = os.getenv("WEBSHARE_PROXY_USERNAME", "").strip()
-        cookie_file = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+        # Same cookies as the yt-dlp path. Without this the fast primary path
+        # runs unauthenticated, gets IpBlocked, and every video falls through
+        # to the slow yt-dlp fallback.
+        cookie_file = self.cookie_file()
 
         try:
             if webshare_user:
@@ -231,23 +280,52 @@ class YouTubeTranscriptSource(Source):
 
     #: Set when YouTube blocks the IP rather than when a video lacks captions.
     _blocked: bool = False
+    #: Memoised export path; "" means "tried and failed", None means "not tried".
+    _cookie_file_cache: str | None = None
+    #: Consecutive failures — a long run means the session died, not that these
+    #: particular videos lack captions.
+    _consecutive_failures: int = 0
 
     def ingest(self, *, limit: int | None = None, refresh: bool = False) -> dict[str, Any]:
         videos = self.list_videos(limit=limit)
         existing = self.store.document_ids(source=self.name)
 
+        # YouTube tolerates a steady trickle far better than a burst. Override
+        # with YOUTUBE_INGEST_DELAY_SECONDS if you know what you're doing.
+        delay = float(os.getenv("YOUTUBE_INGEST_DELAY_SECONDS", "2.0"))
+        abort_after = int(os.getenv("YOUTUBE_ABORT_AFTER_FAILURES", "12"))
+
         added = skipped = no_captions = 0
+        aborted = False
+        self._consecutive_failures = 0
         for i, video in enumerate(videos, 1):
             doc_id = f"yt:{video['id']}"
             if doc_id in existing and not refresh:
                 skipped += 1
                 continue
 
+            # Pace every attempt, not just the successful ones. Hammering
+            # YouTube is what gets a session invalidated mid-run.
+            if i > 1:
+                time.sleep(delay)
+
             snippets = self.fetch_transcript(video["id"])
             if not snippets:
                 no_captions += 1
+                self._consecutive_failures += 1
                 log.info("[%d/%d] no captions: %s", i, len(videos), video["title"][:70])
+                if self._consecutive_failures >= abort_after:
+                    log.error(
+                        "%d videos failed in a row — stopping. YouTube has almost "
+                        "certainly invalidated the session rather than these videos "
+                        "all lacking captions. Re-export cookies and resume; "
+                        "already-ingested videos are skipped.",
+                        self._consecutive_failures,
+                    )
+                    aborted = True
+                    break
                 continue
+            self._consecutive_failures = 0
 
             published = None
             if video.get("upload_date") and len(str(video["upload_date"])) == 8:
@@ -280,16 +358,28 @@ class YouTubeTranscriptSource(Source):
             log.info(
                 "[%d/%d] %s (%d chunks)", i, len(videos), video["title"][:70], len(chunks)
             )
-            time.sleep(0.2)  # be gentle with YouTube
-
         summary = {
             "source": self.name,
             "videos_listed": len(videos),
             "added": added,
             "skipped_existing": skipped,
             "no_captions": no_captions,
+            "stopped_early": aborted,
         }
-        if self._blocked and added == 0:
+        if aborted:
+            summary["ERROR"] = (
+                f"Stopped after {self._consecutive_failures} consecutive failures. "
+                "YouTube invalidated the session mid-run (typically seen as "
+                "'The page needs to be reloaded').\n"
+                "    Re-run to resume — ingest is incremental and skips what's "
+                "already stored. To avoid it recurring:\n"
+                "      1. Export cookies from a PRIVATE/incognito window, then close\n"
+                "         it, so YouTube isn't rotating the session you're using.\n"
+                "      2. Raise YOUTUBE_INGEST_DELAY_SECONDS (default 2.0).\n"
+                "      3. Ingest in batches: --limit 50 a few times.\n"
+                "    See docs/TROUBLESHOOTING.md."
+            )
+        elif self._blocked and added == 0:
             summary["ERROR"] = (
                 "YouTube is blocking transcript requests from this IP, so nothing "
                 "was ingested. This is not a bug in the bot. Fix it by using your "
