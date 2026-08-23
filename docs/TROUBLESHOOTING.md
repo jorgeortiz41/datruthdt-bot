@@ -222,6 +222,21 @@ macOS system Python and Homebrew Python both ship it. If yours doesn't, use a
 
 ---
 
+## `400 invalid_request_error: The following domains are not accessible to our user agent`
+
+**Symptom.** Every question fails instantly with a 400 naming a domain, e.g.
+`['reddit.com']`. No answer at all, not a degraded one.
+
+**Cause.** `sources[web_search].allowed_domains` in the persona file lists a site
+that blocks Anthropic's crawler. The API rejects the **entire request** if even
+one entry is unreachable — it does not silently drop the bad domain.
+
+**Fix.** Remove it. Known-blocked and not worth re-adding: `reddit.com`,
+`x.com`, `dokkaninfo.com`, `dokkandb.com`. To search the open web instead, delete
+the `allowed_domains` key entirely.
+
+---
+
 ## Rate limits from Anthropic
 
 The SDK retries 429s automatically. If you're hitting them constantly, lower

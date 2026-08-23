@@ -182,13 +182,18 @@ sources:
   - type: web_search
     enabled: true
     max_uses: 4
+    # CAREFUL: every domain listed here must be crawlable by Anthropic's user
+    # agent. If even one blocks it, the API rejects the WHOLE request with a
+    # 400 ("The following domains are not accessible to our user agent"), and
+    # the bot answers nothing at all.
+    #
+    # Known-blocked, do not re-add: reddit.com, x.com, dokkaninfo.com,
+    # dokkandb.com. Leave this list empty to search the open web instead.
     allowed_domains:
-      - dokkaninfo.com
       - dbz-dokkanbattle.fandom.com
-      - reddit.com
       - dbz.space
       - youtube.com
-      - x.com
+      - gamepress.gg
     description: >-
       Search the live web for breaking Dokkan news — new banners, celebration
       dates, upcoming units, datamines and current meta discussion.
