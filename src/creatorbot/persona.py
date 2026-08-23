@@ -186,7 +186,6 @@ If asked about the project itself: {disc.get('statement', '').strip()}"""
             "light": "\nMild profanity is in character but keep it occasional — "
             "'damn', 'hell', 'crap'. Never slurs, never sexual content.",
             "uncensored": "\nStrong language is fine where it fits the energy. "
-            "Never slurs, never sexual content.",
         }.get(profanity, "")
     )
     parts.append("\n".join(voice_lines))

@@ -83,6 +83,36 @@ ingesting.
 
 ---
 
+## Everything reports "no captions" (but the videos clearly have captions)
+
+Check whether you're actually being rate-limited rather than reading empty
+caption tracks:
+
+```bash
+creatorbot ingest --limit 3 -v
+```
+
+If the summary carries an `ERROR:` about 429 / IpBlocked, YouTube is
+rate-limiting the **caption download** (the `timedtext` endpoint), which is a
+separate limit from listing videos. yt-dlp will happily list the caption track
+URLs while the download of those tracks returns HTTP 429.
+
+**A 429 is temporary.** Waiting an hour or two is very often the entire fix.
+Then resume with a slower pace and smaller batches:
+
+```bash
+YOUTUBE_INGEST_DELAY_SECONDS=4 creatorbot ingest --limit 40
+```
+
+`YOUTUBE_PLAYER_CLIENTS=default,web_embedded` switches which player client
+yt-dlp uses. That helps with age gates and bot-check interstitials, but **not**
+with a 429 on the caption download — different endpoint, different limit.
+
+If it persists across a long wait, route through a residential proxy
+(`YOUTUBE_PROXY`, or `WEBSHARE_PROXY_USERNAME`/`PASSWORD`).
+
+---
+
 ## "The page needs to be reloaded" partway through an ingest
 
 **Symptom.** The first N videos ingest fine, then every subsequent one fails.

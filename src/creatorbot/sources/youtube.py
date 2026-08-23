@@ -125,6 +125,18 @@ class YouTubeTranscriptSource(Source):
         proxy = os.getenv("YOUTUBE_PROXY", "").strip()
         if proxy:
             opts["proxy"] = proxy
+
+        # Which YouTube player clients yt-dlp should try, e.g.
+        #   YOUTUBE_PLAYER_CLIENTS=default,web_embedded
+        #   YOUTUBE_PLAYER_CLIENTS=tv_embedded
+        # Useful against age gates and "Sign in to confirm you're not a bot".
+        # Note it does NOT help with a 429 on the caption download itself —
+        # that is an IP rate limit on the timedtext endpoint, not a player gate.
+        clients = os.getenv("YOUTUBE_PLAYER_CLIENTS", "").strip()
+        if clients:
+            opts["extractor_args"] = {
+                "youtube": {"player_client": [c.strip() for c in clients.split(",") if c.strip()]}
+            }
         return opts
 
     def _transcript_api_client(self):
@@ -272,8 +284,18 @@ class YouTubeTranscriptSource(Source):
                     break
             if not url:
                 return []
-            text = httpx.get(url, timeout=30.0, follow_redirects=True).text
-            return _parse_vtt(text)
+
+            resp = httpx.get(url, timeout=30.0, follow_redirects=True)
+            if resp.status_code == 429:
+                # Google's rate-limit page. Parsing it yields zero cues, which
+                # would otherwise be misreported as "this video has no captions".
+                self._blocked = True
+                log.debug("caption download rate-limited (429) for %s", video_id)
+                return []
+            if resp.status_code != 200:
+                log.debug("caption download HTTP %s for %s", resp.status_code, video_id)
+                return []
+            return _parse_vtt(resp.text)
         except Exception as exc:
             log.debug("yt-dlp transcript fallback failed for %s: %s", video_id, exc)
             return []
@@ -379,11 +401,13 @@ class YouTubeTranscriptSource(Source):
                 "      3. Ingest in batches: --limit 50 a few times.\n"
                 "    See docs/TROUBLESHOOTING.md."
             )
-        elif self._blocked and added == 0:
+        elif self._blocked:
             summary["ERROR"] = (
-                "YouTube is blocking transcript requests from this IP, so nothing "
-                "was ingested. This is not a bug in the bot. Fix it by using your "
-                "own logged-in session or a proxy:\n"
+                "YouTube rate-limited or blocked this IP (HTTP 429 on the caption "
+                "download, or IpBlocked from the transcript API). Videos reported as "
+                "'no captions' during this run may well have captions.\n"
+                "    A 429 clears on its own — waiting an hour or two is often the "
+                "whole fix. Otherwise:\n"
                 "      YOUTUBE_COOKIES_FROM_BROWSER=chrome   (in .env)\n"
                 "      YOUTUBE_COOKIES_FILE=/path/to/cookies.txt\n"
                 "      YOUTUBE_PROXY=http://user:pass@host:port\n"
