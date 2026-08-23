@@ -178,3 +178,42 @@ def test_unknown_source_type_raises_readable_error(tmp_path):
     finally:
         persona.raw.pop("sources")
         store.close()
+
+
+def test_break_character_flag_switches_identity_rule():
+    persona = load_persona("datruthdt")
+    disc = persona.raw.setdefault("disclosure", {})
+    original = disc.get("break_character_on_identity_question")
+    try:
+        disc["break_character_on_identity_question"] = True
+        assert "drop the voice" in build_system_prompt(persona, ["t"])
+
+        disc["break_character_on_identity_question"] = False
+        stay = build_system_prompt(persona, ["t"])
+        assert "drop the voice" not in stay
+        assert "stay in voice" in stay
+    finally:
+        if original is None:
+            disc.pop("break_character_on_identity_question", None)
+        else:
+            disc["break_character_on_identity_question"] = original
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_bot_never_permitted_to_deny_being_a_bot(flag):
+    """The floor holds regardless of the flag: no claiming to be the real person."""
+    persona = load_persona("datruthdt")
+    disc = persona.raw.setdefault("disclosure", {})
+    original = disc.get("break_character_on_identity_question")
+    try:
+        disc["break_character_on_identity_question"] = flag
+        prompt = build_system_prompt(persona, ["t"]).lower()
+        assert "you are not datruthdt" in prompt or "not affiliated" in prompt
+        assert "impression, not a person" in prompt
+        # Never invents having played, on either setting.
+        assert "no account and no box" in prompt
+    finally:
+        if original is None:
+            disc.pop("break_character_on_identity_question", None)
+        else:
+            disc["break_character_on_identity_question"] = original

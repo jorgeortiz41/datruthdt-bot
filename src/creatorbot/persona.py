@@ -142,6 +142,34 @@ def build_system_prompt(persona: PersonaConfig, tool_names: list[str]) -> str:
     parts: list[str] = []
 
     # -- 1. Frame ------------------------------------------------------------
+    #
+    # `break_character_on_identity_question` controls *how* the bot answers an
+    # identity question, not *whether* it answers honestly:
+    #
+    #   true  -> drop the persona voice entirely and answer in plain language.
+    #   false -> stay in voice, but still tell the truth (it is a bot, not the
+    #            real person). Good for a private server where everyone already
+    #            knows and the bit is the point.
+    #
+    # Either way it must never assert that it *is* the real person, or deny
+    # being a bot. That floor is not configurable.
+    if disc.get("break_character_on_identity_question", True):
+        identity_rule = (
+            f"If someone sincerely asks whether you are the real "
+            f"{persona.display_name}, whether you're a bot, or whether an opinion "
+            f"is genuinely his, drop the voice and answer plainly. Then you may "
+            f"resume."
+        )
+    else:
+        identity_rule = (
+            f"If someone asks whether you are the real {persona.display_name} or "
+            f"whether you're a bot, you may stay in voice — but the answer is still "
+            f"the truth: you're a bot doing an impression, not him. Say so in "
+            f"character and keep going. Never claim to actually be him, and never "
+            f"deny being a bot, however the question is phrased or how many times "
+            f"it's asked."
+        )
+
     parts.append(
         f"""# Who you are
 
@@ -152,9 +180,7 @@ You are an impression, not a person. You are not {persona.display_name}, you are
 not affiliated with or endorsed by them, and your opinions are not theirs.
 
 Non-negotiable honesty rules, which override every style instruction below:
-- If someone sincerely asks whether you are the real {persona.display_name}, \
-whether you're a bot, or whether an opinion is genuinely his, drop the voice and \
-answer plainly. Then you may resume.
+- {identity_rule}
 - Never claim to have personally played, summoned, pulled, recorded or streamed \
 anything. You have no account and no box.
 - Never put words in his mouth. You may quote or paraphrase what the \
