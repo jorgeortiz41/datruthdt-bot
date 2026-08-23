@@ -105,26 +105,43 @@ will only work via `/ask`. Click **Save Changes**.
 
 ### 3. Invite it to your server
 
-1. **OAuth2** → **URL Generator**.
-2. Under **Scopes** tick:
-   - ✅ `bot`
-   - ✅ `applications.commands`
-3. Under **Bot Permissions** tick:
-   - ✅ Send Messages
-   - ✅ Read Message History
-   - ✅ Embed Links
-   - ✅ Use Slash Commands
-4. Copy the **Generated URL** at the bottom, open it in a browser, pick your
-   server, and **Authorize**.
-
-> You need **Manage Server** permission on the target server to add a bot.
-
-The permissions integer for that set is `274877991936` — the generated URL will
-look like:
+**Just build the URL yourself.** A bot invite is a callback-less OAuth2 flow — it
+needs no redirect URI, no client secret and no web server. Take your
+**Application ID** (Developer Portal → **General Information** → *Application
+ID*, also shown as *Client ID* on the OAuth2 page) and paste it in here:
 
 ```
-https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=274877991936&scope=bot%20applications.commands
+https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=2147568640&scope=bot%20applications.commands
 ```
+
+Open it, pick your server, **Authorize**. You need **Manage Server** permission
+on the target server.
+
+`2147568640` is the sum of the permissions the bot actually uses:
+
+| Permission | Bit | Value |
+|---|---|---|
+| View Channel | `1 << 10` | 1024 |
+| Send Messages | `1 << 11` | 2048 |
+| Embed Links | `1 << 14` | 16384 |
+| Read Message History | `1 << 16` | 65536 |
+| Use Application Commands | `1 << 31` | 2147483648 |
+
+> **"Please enter a redirect URI"** — that's the portal's **URL Generator**
+> refusing to build a link until the app has a redirect registered, even though
+> a bot invite doesn't use one. Ignore the generator and use the URL above. If
+> you'd rather use the generator anyway, add any placeholder under **OAuth2 →
+> Redirects** (e.g. `http://localhost`), **Save Changes**, and the dropdown
+> unblocks. The bot never receives a callback either way.
+
+<details>
+<summary>Alternative: the Installation tab</summary>
+
+Newer apps can skip OAuth2 entirely — **Installation** → set *Install Link* to
+**Discord Provided Link**, then under **Default Install Settings → Guild
+Install** add the `bot` and `applications.commands` scopes plus the permissions
+above. Discord generates and hosts the invite link for you.
+</details>
 
 ### 4. Run it
 

@@ -98,6 +98,24 @@ just `bot`. If you didn't, re-run the OAuth2 URL with both ticked.
 
 ---
 
+## "Please enter a redirect URI" in the OAuth2 URL Generator
+
+A bot invite is a callback-less flow — it needs no redirect URI. The portal's
+URL Generator just won't emit a link until the app has one registered.
+
+**Fix:** skip the generator. Build the invite URL directly with your Application
+ID (General Information → *Application ID*):
+
+```
+https://discord.com/api/oauth2/authorize?client_id=YOUR_APP_ID&permissions=2147568640&scope=bot%20applications.commands
+```
+
+If you want to use the generator anyway, add any placeholder under **OAuth2 →
+Redirects** (e.g. `http://localhost`) and **Save Changes**. The bot never
+receives a callback either way, so the value is irrelevant.
+
+---
+
 ## The bot ignores @mentions but `/ask` works
 
 **Message Content Intent** is off. Discord Developer Portal → your app → **Bot**
