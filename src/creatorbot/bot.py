@@ -235,10 +235,8 @@ def run() -> None:
         raise SystemExit(
             "DISCORD_BOT_TOKEN is not set. Copy .env.example to .env and fill it in."
         )
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        log.warning(
-            "ANTHROPIC_API_KEY not set — relying on an `ant auth login` profile"
-        )
+    if not os.getenv("XAI_API_KEY"):
+        log.warning("XAI_API_KEY not set — the engine will fail to start")
 
     persona = load_persona()
     log.info("persona: %s (%s)", persona.display_name, persona.path.name)

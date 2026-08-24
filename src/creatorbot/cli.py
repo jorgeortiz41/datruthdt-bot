@@ -98,7 +98,7 @@ def cmd_embed(args) -> int:
 
 
 def cmd_style_profile(args) -> int:
-    import anthropic
+    from openai import OpenAI
 
     from .config import load_persona
     from .persona import generate_style_profile, select_exemplars
@@ -107,7 +107,7 @@ def cmd_style_profile(args) -> int:
     persona = load_persona(args.persona)
     store = CorpusStore(persona.db_path)
     try:
-        client = anthropic.Anthropic()
+        client = OpenAI(api_key=os.getenv("XAI_API_KEY"), base_url="https://api.x.ai/v1")
         print(f"Sampling {args.sample} passages and deriving the style guide...")
         profile = generate_style_profile(
             persona, store, client, sample_size=args.sample
@@ -207,7 +207,7 @@ def cmd_doctor(args) -> int:
 
     ok = True
     for var, required in (
-        ("ANTHROPIC_API_KEY", True),
+        ("XAI_API_KEY", True),
         ("DISCORD_BOT_TOKEN", True),
         ("VOYAGE_API_KEY", False),
     ):

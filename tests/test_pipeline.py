@@ -118,7 +118,7 @@ def test_search_no_results_is_empty_not_error(store):
 def test_persona_loads_and_prompt_builds():
     persona = load_persona("datruthdt")
     assert persona.display_name == "DaTruthDT"
-    assert persona.model == "claude-opus-5"
+    assert persona.model == "grok-4.6"
 
     prompt = build_system_prompt(persona, ["search_videos", "search_wiki"])
     # The honesty layer must survive prompt assembly.

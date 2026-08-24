@@ -1,6 +1,9 @@
 """The answering engine: a Grok tool-use loop over the persona's sources.
 
-Uses the xAI API (OpenAI-compatible) with native web_search + custom function tools.
+Uses xAI's Responses API (OpenAI-compatible, /v1/responses) with native
+web_search + custom function tools. xAI's /v1/chat/completions no longer
+supports a server-side web_search tool — Live Search on that endpoint is
+deprecated in favor of the Responses API's Agent Tools.
 """
 
 from __future__ import annotations
@@ -54,7 +57,9 @@ class Engine:
         for src in self.sources:
             src._embedder = self.embedder
 
-        # Build OpenAI-style tools list
+        # Build Responses-API-style tools list. Function tools are flat here
+        # (name/description/parameters at the top level), unlike the nested
+        # {"type": "function", "function": {...}} shape chat.completions uses.
         self.tools: list[dict[str, Any]] = []
         self._tools_by_name: dict[str, Any] = {}
 
@@ -62,32 +67,29 @@ class Engine:
             spec = src.tool_spec()
             if not spec:
                 continue
-            # Convert to OpenAI function format
             tool = {
                 "type": "function",
-                "function": {
-                    "name": spec["name"],
-                    "description": spec.get("description", ""),
-                    "parameters": spec.get(
-                        "input_schema", {"type": "object", "properties": {}}
-                    ),
-                },
+                "name": spec["name"],
+                "description": spec.get("description", ""),
+                "parameters": spec.get(
+                    "input_schema", {"type": "object", "properties": {}}
+                ),
             }
             self.tools.append(tool)
             self._tools_by_name[spec["name"]] = src
 
-        # Native xAI web search (server-side)
+        # Native xAI web search (server-side Agent Tool).
         ws = web_search_config(persona)
         if ws:
             web_tool: dict[str, Any] = {"type": "web_search"}
-            # xAI supports allowed_domains on the tool
             if ws.get("allowed_domains"):
-                web_tool["allowed_domains"] = list(ws["allowed_domains"])[:5]
+                web_tool["filters"] = {
+                    "allowed_domains": list(ws.get("allowed_domains"))[:5]
+                }
             self.tools.append(web_tool)
 
         self.system_prompt = build_system_prompt(
-            persona,
-            [t.get("function", {}).get("name") or t.get("type") for t in self.tools],
+            persona, [t.get("name") or t.get("type") for t in self.tools]
         )
 
     def close(self) -> None:
@@ -110,12 +112,12 @@ class Engine:
         self, question: str, history: list[dict[str, Any]] | None = None
     ) -> Answer:
         """Answer one question, running the tool loop to completion."""
-        messages: list[dict[str, Any]] = [
+        input_items: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt}
         ]
         if history:
-            messages.extend(history)
-        messages.append({"role": "user", "content": question})
+            input_items.extend(history)
+        input_items.append({"role": "user", "content": question})
 
         citations: list[str] = []
         tools_used: list[str] = []
@@ -123,12 +125,12 @@ class Engine:
 
         for iteration in range(self.persona.max_tool_iterations):
             try:
-                response = await self.client.chat.completions.create(
+                response = await self.client.responses.create(
                     model=self.persona.model,
-                    messages=messages,
+                    input=input_items,
                     tools=self.tools if self.tools else None,
                     tool_choice="auto",
-                    max_tokens=self.persona.max_tokens,
+                    max_output_tokens=self.persona.max_tokens,
                     temperature=0.7,
                 )
             except Exception as exc:
@@ -138,53 +140,44 @@ class Engine:
                     stop_reason="error",
                 )
 
-            choice = response.choices[0]
-            message = choice.message
+            output = response.output or []
+            citations.extend(_server_citations(output))
 
-            # Track usage
             if response.usage:
                 usage["input_tokens"] += (
-                    getattr(response.usage, "prompt_tokens", 0) or 0
+                    getattr(response.usage, "input_tokens", 0) or 0
                 )
                 usage["output_tokens"] += (
-                    getattr(response.usage, "completion_tokens", 0) or 0
+                    getattr(response.usage, "output_tokens", 0) or 0
                 )
 
-            # Append assistant message
-            assistant_msg: dict[str, Any] = {
-                "role": "assistant",
-                "content": message.content or "",
-            }
-            if message.tool_calls:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in message.tool_calls
-                ]
-            messages.append(assistant_msg)
+            calls = [item for item in output if getattr(item, "type", None) == "function_call"]
 
-            # No tool calls → final answer
-            if not message.tool_calls:
-                text = clean_reply(message.content or "")
+            # No function calls → final answer.
+            if not calls:
+                text = clean_reply(getattr(response, "output_text", "") or "")
                 return Answer(
                     text=text or "…I got nothing. Ask me again?",
                     citations=_dedupe(citations),
                     tools_used=tools_used,
-                    stop_reason=choice.finish_reason,
+                    stop_reason=getattr(response, "status", None),
                     usage=usage,
                 )
 
-            # Execute tool calls
-            for tc in message.tool_calls:
-                name = tc.function.name
+            # Echo each function call back, then execute it and append its result.
+            for call in calls:
+                call_id = call.call_id
+                name = call.name
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": call.arguments,
+                    }
+                )
                 try:
-                    args = json.loads(tc.function.arguments or "{}")
+                    args = json.loads(call.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
 
@@ -192,11 +185,11 @@ class Engine:
                 text, _is_error, cites = await self._run_tool(name, args)
                 citations.extend(cites)
 
-                messages.append(
+                input_items.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": text or "(no results)",
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": text or "(no results)",
                     }
                 )
 
@@ -208,6 +201,31 @@ class Engine:
             stop_reason="max_iterations",
             usage=usage,
         )
+
+
+def _server_citations(output: list[Any]) -> list[str]:
+    """Pull source links out of web_search's url_citation annotations."""
+    out = []
+    for item in output:
+        if getattr(item, "type", None) != "message":
+            continue
+        for block in getattr(item, "content", None) or []:
+            if getattr(block, "type", None) != "output_text":
+                continue
+            for ann in getattr(block, "annotations", None) or []:
+                if getattr(ann, "type", None) != "url_citation":
+                    continue
+                url = getattr(ann, "url", None)
+                title = getattr(ann, "title", None) or url
+                if url:
+                    out.append(f"[{title}]({url})")
+    return out
+
+
+#: Matches the `?t=`/`&t=` seek parameter on a citation deep link.
+_SEEK_PARAM = re.compile(r"[?&]t=\d+")
+#: Pulls the URL out of a `[label](url)` markdown citation.
+_CITE_URL = re.compile(r"\]\(([^)]+)\)")
 
 
 def clean_reply(text: str) -> str:
@@ -224,10 +242,26 @@ def clean_reply(text: str) -> str:
     return text.strip()
 
 
-def _dedupe(items: list[str], limit: int = 8) -> list[str]:
+def _citation_key(citation: str) -> str:
+    """Identity of the *source* a citation points at, ignoring position in it.
+
+    Several passages from one video are separate hits with different `?t=`
+    timestamps, so deduping on the formatted string keeps all of them and the
+    footer shows the same video two or three times. Key on the URL with the
+    seek parameter stripped instead, so one source appears once.
+    """
+    match = _CITE_URL.search(citation)
+    if not match:
+        return citation
+    return _SEEK_PARAM.sub("", match.group(1)).rstrip("?&")
+
+
+def _dedupe(items: list[str], limit: int = 1) -> list[str]:
+    """First (highest-ranked) citation per distinct source."""
     seen, out = set(), []
     for item in items:
-        if item not in seen:
-            seen.add(item)
+        key = _citation_key(item)
+        if key not in seen:
+            seen.add(key)
             out.append(item)
     return out[:limit]
