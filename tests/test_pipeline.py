@@ -115,6 +115,27 @@ def test_search_no_results_is_empty_not_error(store):
     assert store.lexical_search("zzzzquux", limit=3) == []
 
 
+def test_lexical_search_drops_incidentally_matched_terms(store):
+    """A single incidental word shouldn't smuggle in an unrelated chunk.
+
+    `fts_query` OR-joins every query term so BM25 can rank by overlap, which
+    means a query about something else that happens to share one common word
+    with a passage ("opinion") used to come back as a "hit" indistinguishable
+    from a real multi-term match.
+    """
+    doc = Document(id="yt:abc", source="youtube", title="T", url="u")
+    store.upsert_document(doc, chunk_transcript("yt:abc", TRANSCRIPT, chunk_chars=150))
+
+    # "opinion" alone matches the last chunk, but "random"/"garbage" don't —
+    # only 1 of 3 terms overlaps, below the ~half-the-terms floor.
+    assert store.lexical_search("random garbage opinion", limit=5) == []
+
+    # A real two-term match (both words in the same chunk) still comes back.
+    hits = store.lexical_search("gogeta banner", limit=5)
+    assert hits
+    assert "gogeta" in hits[0].text.lower() and "banner" in hits[0].text.lower()
+
+
 def test_persona_loads_and_prompt_builds():
     persona = load_persona("datruthdt")
     assert persona.display_name == "DaTruthDT"

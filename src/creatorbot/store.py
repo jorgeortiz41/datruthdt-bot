@@ -15,6 +15,7 @@ Design notes
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from collections.abc import Iterable, Sequence
@@ -124,17 +125,37 @@ class Chunk:
         return self.doc_url
 
 
+def _query_tokens(text: str, max_terms: int = 24) -> list[str]:
+    tokens = _TOKEN_RE.findall(text.lower())
+    return [t for t in tokens if len(t) > 1][:max_terms]
+
+
 def fts_query(text: str, max_terms: int = 24) -> str:
     """Turn arbitrary user text into a safe FTS5 MATCH expression.
 
     Each token is quoted (so `"goku"` can't be read as a column filter or an
     operator) and joined with OR, letting BM25 rank by how many matched.
     """
-    tokens = _TOKEN_RE.findall(text.lower())
-    tokens = [t for t in tokens if len(t) > 1][:max_terms]
+    tokens = _query_tokens(text, max_terms)
     if not tokens:
         return ""
     return " OR ".join(f'"{t}"' for t in tokens)
+
+
+def _min_matched_terms(n_query_terms: int) -> int:
+    """How many of the query's terms a hit must actually contain.
+
+    `fts_query` OR-joins every term so BM25 can rank by overlap, but that
+    means a single incidental common-word match (a query about one thing that
+    happens to share one word with an unrelated passage) scores as a "hit"
+    indistinguishable from a real multi-term match. Requiring roughly half
+    the terms (and at least 2, once there's more than one) filters those out
+    without demanding every term co-occur, which real transcribed speech
+    rarely does even for a good match.
+    """
+    if n_query_terms <= 1:
+        return 1
+    return max(2, math.ceil(n_query_terms / 2))
 
 
 class CorpusStore:
@@ -290,9 +311,10 @@ class CorpusStore:
     def lexical_search(
         self, query: str, limit: int = 20, source: str | None = None
     ) -> list[Chunk]:
-        match = fts_query(query)
-        if not match:
+        tokens = _query_tokens(query)
+        if not tokens:
             return []
+        match = " OR ".join(f'"{t}"' for t in tokens)
         sql = (
             "SELECT c.uid, c.doc_id, c.ordinal, c.text, c.meta,"
             " d.title AS doc_title, d.url AS doc_url, d.published_at,"
@@ -306,9 +328,12 @@ class CorpusStore:
         if source:
             sql += " AND d.source = ?"
             params.append(source)
-        # FTS5 bm25() is negative, more-negative = better.
+        # FTS5 bm25() is negative, more-negative = better. Over-fetch: the
+        # OR match lets a single incidental word pull in an unrelated chunk,
+        # so we cast a wider net here and cut it down to `limit` below after
+        # filtering out weak overlaps.
         sql += " ORDER BY rank LIMIT ?"
-        params.append(limit)
+        params.append(max(limit * 5, 30))
 
         try:
             rows = self.conn.execute(sql, params).fetchall()
@@ -317,12 +342,16 @@ class CorpusStore:
             # than take the bot down.
             return []
 
+        need = _min_matched_terms(len(tokens))
         out = []
         for r in rows:
             c = self._row_to_chunk(r)
+            n_matched = sum(1 for t in tokens if t in c.text.lower())
+            if n_matched < need:
+                continue
             c.score = -float(r["rank"])
             out.append(c)
-        return out
+        return out[:limit]
 
     def dense_search(
         self, query_vec: Sequence[float], limit: int = 20, source: str | None = None
