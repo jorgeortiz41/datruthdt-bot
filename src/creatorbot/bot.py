@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import os
 from collections import defaultdict, deque
-from typing import Any
 
 import discord
 from discord import app_commands
@@ -138,7 +137,7 @@ class CreatorBot(discord.Client):
             question = question.replace(mention, "")
         question = question.strip()
         if not question:
-            question = f"Introduce yourself in one or two lines."
+            question = "Introduce yourself in one or two lines."
 
         async with message.channel.typing():
             answer = await self._ask(message.channel.id, question)
@@ -148,7 +147,9 @@ class CreatorBot(discord.Client):
     # -- slash commands -------------------------------------------------------
 
     def _register_commands(self) -> None:
-        @self.tree.command(name="ask", description=f"Ask {self.persona.display_name}Bot anything")
+        @self.tree.command(
+            name="ask", description=f"Ask {self.persona.display_name}Bot anything"
+        )
         @app_commands.describe(question="Your question")
         async def ask(interaction: discord.Interaction, question: str) -> None:
             await interaction.response.defer(thinking=True)
@@ -176,13 +177,19 @@ class CreatorBot(discord.Client):
                 ),
                 inline=False,
             )
-            embed.set_footer(text="Unofficial fan project · not affiliated with the creator")
+            embed.set_footer(
+                text="Unofficial fan project · not affiliated with the creator"
+            )
             await interaction.response.send_message(embed=embed)
 
-        @self.tree.command(name="forget", description="Clear this channel's conversation memory")
+        @self.tree.command(
+            name="forget", description="Clear this channel's conversation memory"
+        )
         async def forget(interaction: discord.Interaction) -> None:
             self._history.pop(interaction.channel_id or 0, None)
-            await interaction.response.send_message("Memory cleared for this channel.", ephemeral=True)
+            await interaction.response.send_message(
+                "Memory cleared for this channel.", ephemeral=True
+            )
 
     # -- shared -------------------------------------------------------------
 
@@ -201,7 +208,9 @@ class CreatorBot(discord.Client):
             body += "\n\n-# " + answer.citations[0]
         return body
 
-    async def _send(self, channel, answer, reply_to: discord.Message | None = None) -> None:
+    async def _send(
+        self, channel, answer, reply_to: discord.Message | None = None
+    ) -> None:
         parts = _split_message(self._format(answer), self.max_chars)
         for i, part in enumerate(parts):
             # suppress_embeds keeps a link a link, instead of a giant preview
@@ -227,7 +236,9 @@ def run() -> None:
             "DISCORD_BOT_TOKEN is not set. Copy .env.example to .env and fill it in."
         )
     if not os.getenv("ANTHROPIC_API_KEY"):
-        log.warning("ANTHROPIC_API_KEY not set — relying on an `ant auth login` profile")
+        log.warning(
+            "ANTHROPIC_API_KEY not set — relying on an `ant auth login` profile"
+        )
 
     persona = load_persona()
     log.info("persona: %s (%s)", persona.display_name, persona.path.name)

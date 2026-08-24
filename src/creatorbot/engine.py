@@ -1,19 +1,19 @@
-"""The answering engine: a Claude tool-use loop over the persona's sources.
+"""The answering engine: a Grok tool-use loop over the persona's sources.
 
-Client-side tools (transcript search, wiki, card-site links) are executed here.
-Web search runs server-side as an Anthropic-hosted tool in the same request, so
-one loop covers both.
+Uses the xAI API (OpenAI-compatible) with native web_search + custom function tools.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import anthropic
+from openai import AsyncOpenAI
 
 from .config import PersonaConfig
 from .embeddings import get_embedder
@@ -22,9 +22,6 @@ from .sources import build_sources, web_search_config
 from .store import CorpusStore
 
 log = logging.getLogger(__name__)
-
-# Server-tool variant with dynamic filtering (Opus 4.6+ / Sonnet 4.6+).
-WEB_SEARCH_TOOL_TYPE = "web_search_20260209"
 
 
 @dataclass
@@ -37,186 +34,171 @@ class Answer:
 
 
 class Engine:
-    """Owns the Anthropic client, the corpus and the source tools."""
+    """Owns the Grok client, the corpus and the source tools."""
 
     def __init__(self, persona: PersonaConfig, *, client: Any | None = None):
         self.persona = persona
         self.store = CorpusStore(persona.db_path)
-        self.client = client or anthropic.AsyncAnthropic()
+
+        api_key = os.getenv("XAI_API_KEY")
+        if not api_key and client is None:
+            raise RuntimeError("XAI_API_KEY is required")
+
+        self.client = client or AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://api.x.ai/v1",
+        )
 
         self.embedder = get_embedder()
         self.sources = build_sources(persona, self.store)
-        # Sources that search the corpus need the embedder for dense retrieval.
         for src in self.sources:
-            src._embedder = self.embedder  # noqa: SLF001 — deliberate injection
+            src._embedder = self.embedder
 
-        self._tools_by_name = {}
+        # Build OpenAI-style tools list
         self.tools: list[dict[str, Any]] = []
+        self._tools_by_name: dict[str, Any] = {}
+
         for src in self.sources:
             spec = src.tool_spec()
-            if spec:
-                self.tools.append(spec)
-                self._tools_by_name[spec["name"]] = src
+            if not spec:
+                continue
+            # Convert to OpenAI function format
+            tool = {
+                "type": "function",
+                "function": {
+                    "name": spec["name"],
+                    "description": spec.get("description", ""),
+                    "parameters": spec.get(
+                        "input_schema", {"type": "object", "properties": {}}
+                    ),
+                },
+            }
+            self.tools.append(tool)
+            self._tools_by_name[spec["name"]] = src
 
+        # Native xAI web search (server-side)
         ws = web_search_config(persona)
         if ws:
-            tool: dict[str, Any] = {
-                "type": WEB_SEARCH_TOOL_TYPE,
-                "name": "web_search",
-                "max_uses": int(ws.get("max_uses", 4)),
-            }
+            web_tool: dict[str, Any] = {"type": "web_search"}
+            # xAI supports allowed_domains on the tool
             if ws.get("allowed_domains"):
-                tool["allowed_domains"] = list(ws.get("allowed_domains"))
-            self.tools.append(tool)
+                web_tool["allowed_domains"] = list(ws["allowed_domains"])[:5]
+            self.tools.append(web_tool)
 
         self.system_prompt = build_system_prompt(
-            persona, [t.get("name", "") for t in self.tools]
+            persona,
+            [t.get("function", {}).get("name") or t.get("type") for t in self.tools],
         )
 
     def close(self) -> None:
         self.store.close()
 
-    # -- tool execution -------------------------------------------------------
-
-    async def _run_tool(self, name: str, tool_input: dict[str, Any]) -> tuple[str, bool, list[str]]:
+    async def _run_tool(
+        self, name: str, tool_input: dict[str, Any]
+    ) -> tuple[str, bool, list[str]]:
         source = self._tools_by_name.get(name)
         if source is None:
             return f"Unknown tool {name!r}.", True, []
         try:
-            # Sources are synchronous (httpx/sqlite); keep the event loop free.
             result = await asyncio.to_thread(source.run_tool, tool_input)
         except Exception as exc:
             log.exception("tool %s failed", name)
             return f"Tool {name} failed: {exc}", True, []
         return result.text, result.is_error, result.citations
 
-    # -- main entry point -----------------------------------------------------
-
     async def answer(
         self, question: str, history: list[dict[str, Any]] | None = None
     ) -> Answer:
         """Answer one question, running the tool loop to completion."""
-        messages: list[dict[str, Any]] = list(history or [])
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self.system_prompt}
+        ]
+        if history:
+            messages.extend(history)
         messages.append({"role": "user", "content": question})
 
         citations: list[str] = []
         tools_used: list[str] = []
-        usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0}
-
-        # Static prefix -> cacheable. Everything volatile lives in `messages`.
-        system = [
-            {
-                "type": "text",
-                "text": self.system_prompt,
-                "cache_control": {"type": "ephemeral", "ttl": "1h"},
-            }
-        ]
-
-        # The `_20260209` web search tool does its dynamic filtering inside a
-        # server-side code execution container. Once that container exists, every
-        # follow-up request in the same turn must name it, or the API rejects the
-        # call with "container_id is required when there are pending tool uses
-        # generated by code execution with tools."
-        container_id: str | None = None
+        usage = {"input_tokens": 0, "output_tokens": 0}
 
         for iteration in range(self.persona.max_tool_iterations):
-            request: dict[str, Any] = {
-                "model": self.persona.model,
-                "max_tokens": self.persona.max_tokens,
-                "system": system,
-                "messages": messages,
-                "tools": self.tools,
-                "thinking": {"type": "adaptive"},
-                "output_config": {"effort": self.persona.effort},
-            }
-            if container_id:
-                request["container"] = container_id
-
             try:
-                response = await self.client.messages.create(**request)
-            except anthropic.BadRequestError as exc:
-                log.error("bad request: %s", exc)
-                return Answer(
-                    text=f"Something's wrong with how I asked the model: {exc.message}",
-                    stop_reason="error",
+                response = await self.client.chat.completions.create(
+                    model=self.persona.model,
+                    messages=messages,
+                    tools=self.tools if self.tools else None,
+                    tool_choice="auto",
+                    max_tokens=self.persona.max_tokens,
+                    temperature=0.7,
                 )
-            except anthropic.RateLimitError:
-                return Answer(
-                    text="I'm getting rate limited right now — give me a minute and ask again.",
-                    stop_reason="rate_limit",
-                )
-            except anthropic.APIStatusError as exc:
-                log.error("api error %s: %s", exc.status_code, exc)
+            except Exception as exc:
+                log.error("Grok API error: %s", exc)
                 return Answer(
                     text="The API is having a moment. Try again in a bit.",
                     stop_reason="error",
                 )
-            except anthropic.APIConnectionError:
-                return Answer(
-                    text="I can't reach the API right now — check the network.",
-                    stop_reason="error",
+
+            choice = response.choices[0]
+            message = choice.message
+
+            # Track usage
+            if response.usage:
+                usage["input_tokens"] += (
+                    getattr(response.usage, "prompt_tokens", 0) or 0
+                )
+                usage["output_tokens"] += (
+                    getattr(response.usage, "completion_tokens", 0) or 0
                 )
 
-            for k in usage:
-                usage[k] += getattr(response.usage, k, 0) or 0
+            # Append assistant message
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": message.content or "",
+            }
+            if message.tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in message.tool_calls
+                ]
+            messages.append(assistant_msg)
 
-            # Carry the code-execution container forward for the rest of the turn.
-            container = getattr(response, "container", None)
-            if container is not None:
-                container_id = getattr(container, "id", None) or container_id
-
-            if response.stop_reason == "refusal":
-                detail = getattr(response, "stop_details", None)
-                log.warning("refusal: %s", getattr(detail, "category", None))
-                return Answer(
-                    text="I'm not going to answer that one. Ask me about Dokkan.",
-                    stop_reason="refusal",
-                )
-
-            # Always echo the full content back — it carries thinking blocks and
-            # server-tool results the API needs on the next turn.
-            messages.append({"role": "assistant", "content": response.content})
-
-            # Server-side tool paused the turn; resume with no new user input.
-            if response.stop_reason == "pause_turn":
-                continue
-
-            if response.stop_reason != "tool_use":
-                text = clean_reply(
-                    "".join(b.text for b in response.content if b.type == "text")
-                )
-                citations.extend(_server_citations(response.content))
-                if response.stop_reason == "max_tokens" and text:
-                    text += " …(cut off)"
+            # No tool calls → final answer
+            if not message.tool_calls:
+                text = clean_reply(message.content or "")
                 return Answer(
                     text=text or "…I got nothing. Ask me again?",
                     citations=_dedupe(citations),
                     tools_used=tools_used,
-                    stop_reason=response.stop_reason,
+                    stop_reason=choice.finish_reason,
                     usage=usage,
                 )
 
-            # Execute every requested client tool concurrently.
-            calls = [b for b in response.content if b.type == "tool_use"]
-            citations.extend(_server_citations(response.content))
-            results = await asyncio.gather(
-                *(self._run_tool(c.name, dict(c.input or {})) for c in calls)
-            )
+            # Execute tool calls
+            for tc in message.tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
 
-            blocks = []
-            for call, (text, is_error, cites) in zip(calls, results):
-                tools_used.append(call.name)
+                tools_used.append(name)
+                text, _is_error, cites = await self._run_tool(name, args)
                 citations.extend(cites)
-                blocks.append(
+
+                messages.append(
                     {
-                        "type": "tool_result",
-                        "tool_use_id": call.id,
+                        "role": "tool",
+                        "tool_call_id": tc.id,
                         "content": text or "(no results)",
-                        "is_error": is_error,
                     }
                 )
-            # All tool_results must go back in ONE user message.
-            messages.append({"role": "user", "content": blocks})
 
         log.warning("hit max_tool_iterations (%d)", self.persona.max_tool_iterations)
         return Answer(
@@ -228,71 +210,24 @@ class Engine:
         )
 
 
-def _server_citations(content: list[Any]) -> list[str]:
-    """Pull source links out of server-side web_search result blocks."""
-    out = []
-    for block in content:
-        if getattr(block, "type", None) != "web_search_tool_result":
-            continue
-        results = getattr(block, "content", None)
-        if not isinstance(results, list):  # an error object, not a result list
-            continue
-        for r in results:
-            url = getattr(r, "url", None)
-            title = getattr(r, "title", None) or url
-            if url:
-                out.append(f"[{title}]({url})")
-    return out
-
-
-#: The model sometimes wraps quoted evidence in citation markup —
-#: `<cite index="1-1">…</cite>`. Discord has no idea what that is and renders the
-#: tags literally, so unwrap it, keeping the quoted text.
-_CITE_TAG = re.compile(r"</?cite\b[^>]*>", re.I)
-#: Any other stray XML-ish tag the model emits (antml, thinking, etc).
-_STRAY_TAG = re.compile(r"</?(antml|thinking|search_quality[^>]*)\b[^>]*>", re.I)
-
-#: Matches the `?t=`/`&t=` seek parameter on a citation deep link.
-_SEEK_PARAM = re.compile(r"[?&]t=\d+")
-#: Pulls the URL out of a `[label](url)` markdown citation.
-_CITE_URL = re.compile(r"\]\(([^)]+)\)")
-
-
 def clean_reply(text: str) -> str:
-    """Strip markup that leaks out of the model into the Discord message.
-
-    The model wraps quoted evidence in `<cite index="1-1">…</cite>`, which
-    Discord renders verbatim as literal angle brackets. Unwrap it and keep the
-    quote; do the same for any other stray XML-ish tag.
-    """
-    text = _CITE_TAG.sub("", text)
-    text = _STRAY_TAG.sub("", text)
-    # Unwrapping can leave doubled spaces where a tag used to be.
+    """Strip markup that leaks into Discord."""
+    text = re.sub(r"</?cite\b[^>]*>", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"</?(antml|thinking|search_quality[^>]*)\b[^>]*>",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-def _citation_key(citation: str) -> str:
-    """Identity of the *source* a citation points at, ignoring position in it.
-
-    Several passages from one video are separate hits with different `?t=`
-    timestamps, so deduping on the formatted string keeps all of them and the
-    footer shows the same video two or three times. Key on the URL with the
-    seek parameter stripped instead, so one source appears once.
-    """
-    match = _CITE_URL.search(citation)
-    if not match:
-        return citation
-    return _SEEK_PARAM.sub("", match.group(1)).rstrip("?&")
-
-
-def _dedupe(items: list[str], limit: int = 1) -> list[str]:
-    """First (highest-ranked) citation per distinct source."""
+def _dedupe(items: list[str], limit: int = 8) -> list[str]:
     seen, out = set(), []
     for item in items:
-        key = _citation_key(item)
-        if key not in seen:
-            seen.add(key)
+        if item not in seen:
+            seen.add(item)
             out.append(item)
     return out[:limit]

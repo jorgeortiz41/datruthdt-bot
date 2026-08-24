@@ -1,14 +1,14 @@
 """Command line interface.
 
-    creatorbot ingest          pull the creator's transcripts into the corpus
-    creatorbot embed           add semantic vectors (needs VOYAGE_API_KEY)
-    creatorbot style-profile   learn the creator's voice from the corpus
-    creatorbot ask "..."       ask a question in the terminal
-    creatorbot chat            interactive REPL
-    creatorbot stats           corpus size and composition
-    creatorbot doctor          check config, keys and source reachability
-    creatorbot prompt          print the assembled system prompt
-    creatorbot run             start the Discord bot
+creatorbot ingest          pull the creator's transcripts into the corpus
+creatorbot embed           add semantic vectors (needs VOYAGE_API_KEY)
+creatorbot style-profile   learn the creator's voice from the corpus
+creatorbot ask "..."       ask a question in the terminal
+creatorbot chat            interactive REPL
+creatorbot stats           corpus size and composition
+creatorbot doctor          check config, keys and source reachability
+creatorbot prompt          print the assembled system prompt
+creatorbot run             start the Discord bot
 """
 
 from __future__ import annotations
@@ -109,7 +109,9 @@ def cmd_style_profile(args) -> int:
     try:
         client = anthropic.Anthropic()
         print(f"Sampling {args.sample} passages and deriving the style guide...")
-        profile = generate_style_profile(persona, store, client, sample_size=args.sample)
+        profile = generate_style_profile(
+            persona, store, client, sample_size=args.sample
+        )
         exemplars = select_exemplars(persona, store)
         print(f"\nWrote {persona.style_profile_path}")
         print(f"Wrote {persona.exemplars_path} ({len(exemplars)} exemplars)")
@@ -185,7 +187,9 @@ def cmd_stats(args) -> int:
             print(f"              {src}: {n:,}")
         print(f"chunks:     {s['chunks']:,}")
         print(f"embeddings: {s['embeddings']:,}")
-        print(f"profile:    {'yes' if persona.style_profile_path.exists() else 'NOT GENERATED'}")
+        print(
+            f"profile:    {'yes' if persona.style_profile_path.exists() else 'NOT GENERATED'}"
+        )
     finally:
         store.close()
     return 0
@@ -202,8 +206,11 @@ def cmd_doctor(args) -> int:
     print(f"model:             {persona.model} (effort={persona.effort})")
 
     ok = True
-    for var, required in (("ANTHROPIC_API_KEY", True), ("DISCORD_BOT_TOKEN", True),
-                          ("VOYAGE_API_KEY", False)):
+    for var, required in (
+        ("ANTHROPIC_API_KEY", True),
+        ("DISCORD_BOT_TOKEN", True),
+        ("VOYAGE_API_KEY", False),
+    ):
         present = bool(os.getenv(var))
         mark = "ok " if present else ("MISSING" if required else "not set")
         print(f"{var:<18} {mark}")
@@ -211,7 +218,9 @@ def cmd_doctor(args) -> int:
             ok = False
 
     embedder = get_embedder()
-    print(f"retrieval:         {'hybrid (BM25 + ' + embedder.model + ')' if getattr(embedder, 'enabled', False) else 'lexical BM25 only'}")
+    print(
+        f"retrieval:         {'hybrid (BM25 + ' + embedder.model + ')' if getattr(embedder, 'enabled', False) else 'lexical BM25 only'}"
+    )
 
     store = CorpusStore(persona.db_path)
     try:
@@ -242,8 +251,10 @@ def cmd_prompt(args) -> int:
     engine = Engine(persona)
     try:
         print(engine.system_prompt)
-        print(f"\n--- {len(engine.system_prompt):,} chars, tools: "
-              f"{[t.get('name') for t in engine.tools]}")
+        print(
+            f"\n--- {len(engine.system_prompt):,} chars, tools: "
+            f"{[t.get('name') for t in engine.tools]}"
+        )
     finally:
         engine.close()
     return 0
@@ -267,22 +278,29 @@ def cmd_personas(args) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="creatorbot", description=__doc__,
+        prog="creatorbot",
+        description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("-p", "--persona", help="persona name (default $CREATORBOT_PERSONA)")
+    parser.add_argument(
+        "-p", "--persona", help="persona name (default $CREATORBOT_PERSONA)"
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("ingest", help="pull the creator's videos into the corpus")
     p.add_argument("--limit", type=int, help="max videos this run")
-    p.add_argument("--refresh", action="store_true", help="re-fetch videos already stored")
+    p.add_argument(
+        "--refresh", action="store_true", help="re-fetch videos already stored"
+    )
     p.set_defaults(func=cmd_ingest)
 
     p = sub.add_parser("embed", help="add semantic vectors (needs VOYAGE_API_KEY)")
     p.set_defaults(func=cmd_embed)
 
-    p = sub.add_parser("style-profile", help="learn the creator's voice from the corpus")
+    p = sub.add_parser(
+        "style-profile", help="learn the creator's voice from the corpus"
+    )
     p.add_argument("--sample", type=int, default=60, help="passages to sample")
     p.set_defaults(func=cmd_style_profile)
 

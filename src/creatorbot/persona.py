@@ -18,7 +18,7 @@ import json
 import logging
 from typing import Any
 
-from .chunking import BLEEP_TOKEN, _BLEEP
+from .chunking import _BLEEP, BLEEP_TOKEN
 from .config import PersonaConfig
 from .store import CorpusStore
 
@@ -72,27 +72,23 @@ EXCERPTS:
 def generate_style_profile(
     persona: PersonaConfig, store: CorpusStore, client: Any, sample_size: int = 60
 ) -> str:
-    """Sample the corpus and have Claude write the style guide. Returns markdown."""
+    """Sample the corpus and have Grok write the style guide. Returns markdown."""
     chunks = store.sample_chunks(sample_size, source="youtube", min_chars=500)
     if not chunks:
         raise RuntimeError(
             "No transcript chunks in the corpus. Run `creatorbot ingest` first."
         )
 
-    # Normalise the caption bleep here as well as at ingest, so a corpus built
-    # before that fix still teaches the profiler about profanity without needing
-    # a full re-ingest.
     excerpts = "\n\n".join(
         f"[{c.doc_title} @ {c.meta.get('timestamp', '?')}]\n"
         f"{_BLEEP.sub(BLEEP_TOKEN, c.text)}"
         for c in chunks
     )
 
-    response = client.messages.create(
+    # Grok / OpenAI style call
+    response = client.chat.completions.create(
         model=persona.model,
         max_tokens=8000,
-        thinking={"type": "adaptive"},
-        output_config={"effort": "high"},
         messages=[
             {
                 "role": "user",
@@ -100,7 +96,7 @@ def generate_style_profile(
             }
         ],
     )
-    text = "".join(b.text for b in response.content if b.type == "text").strip()
+    text = (response.choices[0].message.content or "").strip()
     if not text:
         raise RuntimeError("Model returned no style profile text.")
 
@@ -109,7 +105,9 @@ def generate_style_profile(
     return text
 
 
-def select_exemplars(persona: PersonaConfig, store: CorpusStore, n: int | None = None) -> list[dict]:
+def select_exemplars(
+    persona: PersonaConfig, store: CorpusStore, n: int | None = None
+) -> list[dict]:
     """Pick and persist verbatim style exemplars.
 
     Persisted so the system prompt is byte-stable between runs — a prompt that
@@ -226,8 +224,7 @@ def build_system_prompt(persona: PersonaConfig, tool_names: list[str]) -> str:
             "videos. These corrections come from someone who has actually watched "
             "the channel. **Where they contradict the style guide, these win** — "
             "including where the guide tells you to hedge, soften or tone "
-            "yourself down.\n\n"
-            + "\n".join(f"- {o}" for o in overrides)
+            "yourself down.\n\n" + "\n".join(f"- {o}" for o in overrides)
         )
 
     # -- 4. Verbatim exemplars ----------------------------------------------
@@ -260,7 +257,7 @@ def build_system_prompt(persona: PersonaConfig, tool_names: list[str]) -> str:
         f"""
 # Getting things right
 
-You have these tools: {', '.join(tool_names) if tool_names else '(none)'}.
+You have these tools: {", ".join(tool_names) if tool_names else "(none)"}.
 
 - Facts about mechanics — passives, leader skills, links, multipliers, categories,
   event requirements — come from the wiki tool. Look them up. Do not answer from
@@ -288,19 +285,25 @@ Use tools in parallel when the question needs more than one."""
 
     answer_lines = [
         "\n# Writing the reply",
-        "\n**You are writing a chat message, not a transcript.** Everything above "
-        "describes how he talks on video, where he has twenty minutes and thinks "
-        "out loud. You have a few lines. Keep the attitude, the opinions and one "
-        "or two verbal tics — drop the run-ons, the stutter-restarts, the "
-        "self-corrections and the circling back.",
-        f"\n- Target ~{target} sentences. Go longer only if asked to break "
-        f"something down properly. Hard ceiling {max_chars} characters.",
+        (
+            "\n**You are writing a chat message, not a transcript.** Everything above "
+            "describes how he talks on video, where he has twenty minutes and thinks "
+            "out loud. You have a few lines. Keep the attitude, the opinions and one "
+            "or two verbal tics — drop the run-ons, the stutter-restarts, the "
+            "self-corrections and the circling back."
+        ),
+        (
+            f"\n- Target ~{target} sentences. Go longer only if asked to break "
+            f"something down properly. Hard ceiling {max_chars} characters."
+        ),
         "- State your opinion once. Don't restate it three different ways.",
         "- Lead with the answer. Colour comes after, not before.",
         "- Short paragraphs, no markdown headers, no bullet-point walls. Talk, don't format.",
         "- Keep the energy in the writing, not in emoji. One or two at most.",
-        "- Don't narrate your own process — no 'let me look that up', no "
-        "'I'll break this down for you'. Just do it.",
+        (
+            "- Don't narrate your own process — no 'let me look that up', no "
+            "'I'll break this down for you'. Just do it."
+        ),
     ]
     answer_lines += [f"- {r}" for r in rules]
     parts.append("\n".join(answer_lines))

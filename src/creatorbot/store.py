@@ -114,7 +114,11 @@ class Chunk:
     def deep_link(self) -> str:
         """Video URL with a `?t=` jump to where this chunk starts, when known."""
         start = self.meta.get("start")
-        if self.doc_url and isinstance(start, (int, float)) and "youtube.com" in self.doc_url:
+        if (
+            self.doc_url
+            and isinstance(start, (int, float))
+            and "youtube.com" in self.doc_url
+        ):
             sep = "&" if "?" in self.doc_url else "?"
             return f"{self.doc_url}{sep}t={int(start)}"
         return self.doc_url
@@ -174,7 +178,13 @@ class CorpusStore:
             self.conn.executemany(
                 "INSERT INTO chunks (uid, doc_id, ordinal, text, meta) VALUES (?, ?, ?, ?, ?)",
                 [
-                    (c.uid, doc.id, c.ordinal, c.text, json.dumps(c.meta, ensure_ascii=False))
+                    (
+                        c.uid,
+                        doc.id,
+                        c.ordinal,
+                        c.text,
+                        json.dumps(c.meta, ensure_ascii=False),
+                    )
                     for c in chunks
                 ],
             )
@@ -186,7 +196,9 @@ class CorpusStore:
 
     def document_ids(self, source: str | None = None) -> set[str]:
         if source:
-            cur = self.conn.execute("SELECT id FROM documents WHERE source = ?", (source,))
+            cur = self.conn.execute(
+                "SELECT id FROM documents WHERE source = ?", (source,)
+            )
         else:
             cur = self.conn.execute("SELECT id FROM documents")
         return {r["id"] for r in cur.fetchall()}
@@ -255,7 +267,9 @@ class CorpusStore:
             else 0.0,
         }
 
-    def sample_chunks(self, n: int, source: str | None = None, min_chars: int = 400) -> list[Chunk]:
+    def sample_chunks(
+        self, n: int, source: str | None = None, min_chars: int = 400
+    ) -> list[Chunk]:
         """Random-ish chunks, used to build the style profile and exemplars."""
         sql = (
             "SELECT c.uid, c.doc_id, c.ordinal, c.text, c.meta,"
@@ -269,7 +283,9 @@ class CorpusStore:
             params.append(source)
         sql += " ORDER BY RANDOM() LIMIT ?"
         params.append(n)
-        return [self._row_to_chunk(r) for r in self.conn.execute(sql, params).fetchall()]
+        return [
+            self._row_to_chunk(r) for r in self.conn.execute(sql, params).fetchall()
+        ]
 
     def lexical_search(
         self, query: str, limit: int = 20, source: str | None = None
@@ -390,7 +406,9 @@ class CorpusStore:
 
     # -- internals ------------------------------------------------------------
 
-    def _chunks_by_uid(self, uids: Sequence[str], source: str | None = None) -> list[Chunk]:
+    def _chunks_by_uid(
+        self, uids: Sequence[str], source: str | None = None
+    ) -> list[Chunk]:
         if not uids:
             return []
         placeholders = ",".join("?" for _ in uids)
@@ -403,7 +421,9 @@ class CorpusStore:
         if source:
             sql += " AND d.source = ?"
             params.append(source)
-        return [self._row_to_chunk(r) for r in self.conn.execute(sql, params).fetchall()]
+        return [
+            self._row_to_chunk(r) for r in self.conn.execute(sql, params).fetchall()
+        ]
 
     def _load_vectors(self):
         """Load and L2-normalise every stored vector once, then cache."""

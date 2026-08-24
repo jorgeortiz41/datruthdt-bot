@@ -12,14 +12,29 @@ from creatorbot.persona import build_system_prompt
 from creatorbot.store import CorpusStore, Document, fts_query
 
 TRANSCRIPT = [
-    {"text": "yo what is up everybody it's your boy back with another one", "start": 0.0},
-    {"text": "and today we are summoning on the brand new LR Gogeta banner", "start": 5.0},
+    {
+        "text": "yo what is up everybody it's your boy back with another one",
+        "start": 0.0,
+    },
+    {
+        "text": "and today we are summoning on the brand new LR Gogeta banner",
+        "start": 5.0,
+    },
     {"text": "bro this unit is absolutely busted let me tell you why", "start": 10.0},
     {"text": "he has a 200% lead for pure saiyans which is insane", "start": 15.0},
-    {"text": "and the additional super attacks are guaranteed after turn three", "start": 20.0},
+    {
+        "text": "and the additional super attacks are guaranteed after turn three",
+        "start": 20.0,
+    },
     {"text": "honestly though the banner itself is kind of a skip", "start": 25.0},
-    {"text": "you are better off saving your stones for the anniversary", "start": 30.0},
-    {"text": "that is just my opinion but I really think you should wait", "start": 35.0},
+    {
+        "text": "you are better off saving your stones for the anniversary",
+        "start": 30.0,
+    },
+    {
+        "text": "that is just my opinion but I really think you should wait",
+        "start": 35.0,
+    },
 ]
 
 
@@ -89,7 +104,9 @@ def test_upsert_is_idempotent(store):
 
 def test_hybrid_falls_back_to_lexical_without_vectors(store):
     doc = Document(id="yt:abc", source="youtube", title="T", url="u")
-    store.upsert_document("yt:abc" and doc, chunk_transcript("yt:abc", TRANSCRIPT, chunk_chars=150))
+    store.upsert_document(
+        "yt:abc" and doc, chunk_transcript("yt:abc", TRANSCRIPT, chunk_chars=150)
+    )
     hits = store.hybrid_search("anniversary stones", limit=3, query_vec=None)
     assert hits
 
@@ -137,9 +154,9 @@ def test_card_site_reference_mode_never_fetches(tmp_path):
 @pytest.mark.parametrize(
     "text",
     [
-        "\n\n".join("word " * 120 for _ in range(10)),   # long paragraphs, no periods
-        "x" * 5000,                                       # no whitespace at all
-        ". ".join("Sentence here" for _ in range(400)),   # sentences only
+        "\n\n".join("word " * 120 for _ in range(10)),  # long paragraphs, no periods
+        "x" * 5000,  # no whitespace at all
+        ". ".join("Sentence here" for _ in range(400)),  # sentences only
         "short",
         "para one\n\npara two",
     ],
@@ -152,7 +169,7 @@ def test_discord_message_splitting_never_exceeds_limit(text):
     assert all(p.strip() for p in parts)
     # Nothing may be silently dropped. Chunk boundaries consume the separator
     # they split on, so compare ignoring whitespace.
-    strip_ws = lambda s: re.sub(r"\s+", "", s)  # noqa: E731
+    strip_ws = lambda s: re.sub(r"\s+", "", s)
     assert strip_ws("".join(parts)) == strip_ws(text)
 
 

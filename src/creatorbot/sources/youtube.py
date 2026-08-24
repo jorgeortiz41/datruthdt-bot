@@ -48,8 +48,12 @@ class YouTubeTranscriptSource(Source):
         if yt.get("channel_url"):
             return yt["channel_url"].rstrip("/")
         if yt.get("handle"):
-            return f"https://www.youtube.com/{yt['handle'].lstrip('@') and yt['handle']}"
-        raise ValueError("persona.creator.youtube needs channel_id, channel_url or handle")
+            return (
+                f"https://www.youtube.com/{yt['handle'].lstrip('@') and yt['handle']}"
+            )
+        raise ValueError(
+            "persona.creator.youtube needs channel_id, channel_url or handle"
+        )
 
     @property
     def languages(self) -> list[str]:
@@ -95,7 +99,10 @@ class YouTubeTranscriptSource(Source):
 
         target = self.persona.data_dir / "cookies.txt"
         max_age_h = float(os.getenv("YOUTUBE_COOKIES_MAX_AGE_HOURS", "12"))
-        if target.exists() and (time.time() - target.stat().st_mtime) / 3600 < max_age_h:
+        if (
+            target.exists()
+            and (time.time() - target.stat().st_mtime) / 3600 < max_age_h
+        ):
             self._cookie_file_cache = str(target)
             return self._cookie_file_cache
 
@@ -135,7 +142,11 @@ class YouTubeTranscriptSource(Source):
         clients = os.getenv("YOUTUBE_PLAYER_CLIENTS", "").strip()
         if clients:
             opts["extractor_args"] = {
-                "youtube": {"player_client": [c.strip() for c in clients.split(",") if c.strip()]}
+                "youtube": {
+                    "player_client": [
+                        c.strip() for c in clients.split(",") if c.strip()
+                    ]
+                }
             }
         return opts
 
@@ -273,7 +284,10 @@ class YouTubeTranscriptSource(Source):
                 )
             if not info:
                 return []
-            tracks = {**(info.get("subtitles") or {}), **(info.get("automatic_captions") or {})}
+            tracks = {
+                **(info.get("subtitles") or {}),
+                **(info.get("automatic_captions") or {}),
+            }
             url = None
             for lang in self.languages:
                 for candidate in tracks.get(lang, []):
@@ -308,7 +322,9 @@ class YouTubeTranscriptSource(Source):
     #: particular videos lack captions.
     _consecutive_failures: int = 0
 
-    def ingest(self, *, limit: int | None = None, refresh: bool = False) -> dict[str, Any]:
+    def ingest(
+        self, *, limit: int | None = None, refresh: bool = False
+    ) -> dict[str, Any]:
         videos = self.list_videos(limit=limit)
         existing = self.store.document_ids(source=self.name)
 
@@ -378,7 +394,11 @@ class YouTubeTranscriptSource(Source):
             self.store.upsert_document(doc, chunks)
             added += 1
             log.info(
-                "[%d/%d] %s (%d chunks)", i, len(videos), video["title"][:70], len(chunks)
+                "[%d/%d] %s (%d chunks)",
+                i,
+                len(videos),
+                video["title"][:70],
+                len(chunks),
             )
         summary = {
             "source": self.name,
@@ -485,7 +505,11 @@ class YouTubeTranscriptSource(Source):
 
     def health(self) -> str:
         n = len(self.store.document_ids(source=self.name))
-        return f"{n} videos in corpus" if n else "no videos ingested yet — run `creatorbot ingest`"
+        return (
+            f"{n} videos in corpus"
+            if n
+            else "no videos ingested yet — run `creatorbot ingest`"
+        )
 
 
 def _parse_vtt(text: str) -> list[dict[str, Any]]:

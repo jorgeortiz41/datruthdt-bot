@@ -128,12 +128,12 @@ Sources live in `src/creatorbot/sources/`. The contract is in `base.py`:
 
 ```python
 class Source:
-    ingests: bool = False              # does it write to the corpus?
+    ingests: bool = False  # does it write to the corpus?
 
-    def ingest(self, *, limit, refresh) -> dict: ...      # optional
-    def tool_spec(self) -> dict | None: ...               # Anthropic tool def
+    def ingest(self, *, limit, refresh) -> dict: ...  # optional
+    def tool_spec(self) -> dict | None: ...  # Anthropic tool def
     def run_tool(self, tool_input: dict) -> ToolResult: ...
-    def health(self) -> str: ...                          # for `doctor`
+    def health(self) -> str: ...  # for `doctor`
 ```
 
 ### A read-through source (queried live)
@@ -159,7 +159,10 @@ class ScryfallSource(Source):
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "card_name": {"type": "string", "description": "Exact or fuzzy card name"},
+                    "card_name": {
+                        "type": "string",
+                        "description": "Exact or fuzzy card name",
+                    },
                 },
                 "required": ["card_name"],
             },
@@ -182,8 +185,8 @@ class ScryfallSource(Source):
             return ToolResult(f"No card named {name!r}.")
         card = r.json()
         return ToolResult(
-            f"{card['name']} — {card.get('mana_cost','')}\n"
-            f"{card.get('type_line','')}\n{card.get('oracle_text','')}\n"
+            f"{card['name']} — {card.get('mana_cost', '')}\n"
+            f"{card.get('type_line', '')}\n{card.get('oracle_text', '')}\n"
             f"source: {card['scryfall_uri']}",
             citations=[f"[{card['name']}]({card['scryfall_uri']})"],
         )

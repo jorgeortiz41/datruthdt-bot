@@ -43,7 +43,9 @@ class Source:
 
     # -- ingestion ------------------------------------------------------------
 
-    def ingest(self, *, limit: int | None = None, refresh: bool = False) -> dict[str, Any]:
+    def ingest(
+        self, *, limit: int | None = None, refresh: bool = False
+    ) -> dict[str, Any]:
         """Pull documents into the corpus. Returns a summary dict."""
         raise NotImplementedError(f"{self.name} does not support ingestion")
 

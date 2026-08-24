@@ -30,7 +30,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import quote_plus, urljoin
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -39,7 +39,7 @@ from .base import Source, ToolResult
 
 log = logging.getLogger(__name__)
 
-_TAG_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
+_TAG_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
 _ANY_TAG = re.compile(r"<[^>]+>")
 _WS = re.compile(r"\s+")
 
@@ -153,7 +153,9 @@ class CardSiteSource(Source):
                     # No readable robots.txt — treat as permissive, per RFC 9309.
                     rp.parse([])
             except httpx.HTTPError as exc:
-                log.warning("could not read %s (%s); assuming disallowed", robots_url, exc)
+                log.warning(
+                    "could not read %s (%s); assuming disallowed", robots_url, exc
+                )
                 rp.parse(["User-agent: *", "Disallow: /"])
             self._robots = rp
         product = self.user_agent.split("/", 1)[0]
@@ -199,7 +201,10 @@ class CardSiteSource(Source):
                 url,
                 timeout=25.0,
                 follow_redirects=True,
-                headers={"User-Agent": self.user_agent, "Accept": "text/html,application/json"},
+                headers={
+                    "User-Agent": self.user_agent,
+                    "Accept": "text/html,application/json",
+                },
             )
             self._last_request = time.time()
         except httpx.HTTPError as exc:
@@ -225,7 +230,9 @@ class CardSiteSource(Source):
     def tool_spec(self) -> dict[str, Any]:
         browse = ", ".join((self._opt("browse_urls", {}) or {}).keys()) or "cards"
         if self.mode == "fetch":
-            desc = self.cfg.description or f"Look up and read a page on {self.site_name}."
+            desc = (
+                self.cfg.description or f"Look up and read a page on {self.site_name}."
+            )
         else:
             desc = (
                 (self.cfg.description or f"Build links to {self.site_name}.")
@@ -277,7 +284,9 @@ class CardSiteSource(Source):
         elif query:
             url = self.search_url(query)
         else:
-            return ToolResult("Give a query, a card_id or a browse section.", is_error=True)
+            return ToolResult(
+                "Give a query, a card_id or a browse section.", is_error=True
+            )
 
         label = query or browse or f"card {card_id}"
         citation = f"[{self.site_name}: {label}]({url})"
@@ -316,10 +325,14 @@ class CardSiteSource(Source):
         probe = self.base_url + "/"
         allowed = self.robots_allows(probe)
         if not allowed:
-            return f"fetch mode BUT robots.txt disallows {self.user_agent!r} — will refuse"
+            return (
+                f"fetch mode BUT robots.txt disallows {self.user_agent!r} — will refuse"
+            )
         try:
             r = httpx.get(
-                probe, timeout=15.0, headers={"User-Agent": self.user_agent},
+                probe,
+                timeout=15.0,
+                headers={"User-Agent": self.user_agent},
                 follow_redirects=True,
             )
             return f"fetch mode, robots ok, HTTP {r.status_code}"

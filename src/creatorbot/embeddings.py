@@ -48,7 +48,9 @@ class VoyageEmbedder:
 
     enabled = True
 
-    def __init__(self, api_key: str, model: str = DEFAULT_VOYAGE_MODEL, timeout: float = 60.0):
+    def __init__(
+        self, api_key: str, model: str = DEFAULT_VOYAGE_MODEL, timeout: float = 60.0
+    ):
         self.api_key = api_key
         self.model = model
         self._client = httpx.Client(
@@ -96,4 +98,6 @@ def get_embedder(model: str | None = None) -> Embedder:
         # Without numpy we can store vectors but can't search them; don't
         # pretend dense retrieval is on.
         return NullEmbedder()
-    return VoyageEmbedder(api_key, model or os.getenv("VOYAGE_MODEL", DEFAULT_VOYAGE_MODEL))
+    return VoyageEmbedder(
+        api_key, model or os.getenv("VOYAGE_MODEL", DEFAULT_VOYAGE_MODEL)
+    )

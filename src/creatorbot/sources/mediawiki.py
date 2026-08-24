@@ -21,13 +21,15 @@ from .base import Source, ToolResult
 
 log = logging.getLogger(__name__)
 
-_DROP_ELEMENTS = re.compile(r"<(script|style|sup)[^>]*>.*?</\1>", re.S | re.I)
-_CELL_END = re.compile(r"</(td|th)>", re.I)
-_BLOCK_END = re.compile(r"</(tr|p|div|h[1-6]|li|ul|ol)>", re.I)
+_DROP_ELEMENTS = re.compile(
+    r"<(script|style|sup)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
+_CELL_END = re.compile(r"</(td|th)>", re.IGNORECASE)
+_BLOCK_END = re.compile(r"</(tr|p|div|h[1-6]|li|ul|ol)>", re.IGNORECASE)
 _ANY_TAG = re.compile(r"<[^>]+>")
 
 # Fandom appends an auto-generated Q&A block that is padding, not card data.
-_CUTOFF = re.compile(r"\bQuick Answers\b", re.I)
+_CUTOFF = re.compile(r"\bQuick Answers\b", re.IGNORECASE)
 
 
 class MediaWikiSource(Source):
@@ -122,7 +124,7 @@ class MediaWikiSource(Source):
         text = _ANY_TAG.sub(" ", text)
         text = html.unescape(text)
         text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"(?:\s*\|\s*){2,}", " | ", text)   # collapse empty cells
+        text = re.sub(r"(?:\s*\|\s*){2,}", " | ", text)  # collapse empty cells
         text = re.sub(r"\n\s*\n+", "\n", text).strip()
 
         cut = _CUTOFF.search(text)
@@ -173,7 +175,9 @@ class MediaWikiSource(Source):
         try:
             results = self.search(query, limit=5)
         except httpx.HTTPError as exc:
-            return ToolResult(f"{self.site_name} is unreachable right now ({exc}).", is_error=True)
+            return ToolResult(
+                f"{self.site_name} is unreachable right now ({exc}).", is_error=True
+            )
 
         if not results:
             return ToolResult(

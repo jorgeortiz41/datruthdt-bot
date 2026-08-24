@@ -26,7 +26,7 @@ BLEEP_TOKEN = "[bleep]"
 
 def make_uid(doc_id: str, ordinal: int, text: str) -> str:
     """Stable per-(document, position, content) id, so re-ingest is idempotent."""
-    h = hashlib.sha1(f"{doc_id}:{ordinal}:{text}".encode("utf-8")).hexdigest()[:16]
+    h = hashlib.sha1(f"{doc_id}:{ordinal}:{text}".encode()).hexdigest()[:16]
     return f"{doc_id}:{ordinal}:{h}"
 
 

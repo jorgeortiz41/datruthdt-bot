@@ -68,7 +68,9 @@ def build(persona, script):
 
 
 def test_plain_answer_no_tools(persona):
-    eng = build(persona, [response([text_block("Bro that unit is busted.")], "end_turn")])
+    eng = build(
+        persona, [response([text_block("Bro that unit is busted.")], "end_turn")]
+    )
     try:
         ans = asyncio.run(eng.answer("is he good?"))
         assert ans.text == "Bro that unit is busted."
@@ -167,7 +169,9 @@ def test_refusal_is_handled(persona):
 def test_iteration_cap_terminates(persona):
     # Always asks for a tool — must stop, not spin.
     script = [
-        response([tool_use("search_videos", tid=f"t{i}", inp={"query": "x"})], "tool_use")
+        response(
+            [tool_use("search_videos", tid=f"t{i}", inp={"query": "x"})], "tool_use"
+        )
         for i in range(20)
     ]
     eng = build(persona, script)
@@ -180,7 +184,10 @@ def test_iteration_cap_terminates(persona):
 
 
 def test_system_prompt_is_cached_and_stable(persona):
-    script = [response([text_block("a")], "end_turn"), response([text_block("b")], "end_turn")]
+    script = [
+        response([text_block("a")], "end_turn"),
+        response([text_block("b")], "end_turn"),
+    ]
     eng = build(persona, script)
     try:
         asyncio.run(eng.answer("one"))
